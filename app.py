@@ -1640,6 +1640,23 @@ word_file = generate_word_report(
     treasury_annual_fee=treasury_annual_fee,
     fund_percentage=fund_percentage,
     fund_annual_fee=fund_annual_fee,
+    fund_type=fund_result.fund_type,
+    apply_come_cotas=apply_come_cotas,
+    fund_come_cotas_tax=fund_result.come_cotas_tax,
+    fund_redemption_tax=fund_result.redemption_tax,
+    fund_total_tax=fund_result.total_tax,
+    fund_admin_fee_impact=fund_result.admin_fee_impact,
+    fund_net_final_amount=fund_result.net_final_amount,
+    fund_net_return_percentage=fund_result.net_return_percentage,
+    fund_come_cotas_rate=(
+        0.15
+        if fund_result.fund_type == FundTaxService.LONG_TERM
+        else 0.20
+    ),
+    fund_final_ir_rate=fund_tax_service.get_final_ir_rate(
+        fund_months * 30,
+        fund_result.fund_type
+    ),
     comparison_df=comparison_df,
     cashflow_df=report_cashflow_df,
     monthly_df=report_monthly_df,

@@ -604,10 +604,20 @@ def generate_word_report(
     treasury_annual_fee,
     fund_percentage,
     fund_annual_fee,
-    comparison_df,
-    cashflow_df,
-    monthly_df,
-    consultive_analysis,
+    fund_type=None,
+    apply_come_cotas=True,
+    fund_come_cotas_tax=0.0,
+    fund_redemption_tax=0.0,
+    fund_total_tax=0.0,
+    fund_admin_fee_impact=0.0,
+    fund_net_final_amount=0.0,
+    fund_net_return_percentage=0.0,
+    fund_come_cotas_rate=0.0,
+    fund_final_ir_rate=0.0,
+    comparison_df=None,
+    cashflow_df=None,
+    monthly_df=None,
+    consultive_analysis=None,
     market_intelligence=None,
     report_options=None,
 ):
@@ -920,32 +930,6 @@ def generate_word_report(
             gross_columns
         )
 
-        if gross_df is not None and not gross_df.empty:
-            add_subheading(
-                document,
-                "Comparativo de Rentabilidade Bruta"
-            )
-
-            gross_word_df = prepare_dataframe_for_word(gross_df)
-
-            gross_word_df = gross_word_df.rename(
-                columns={
-                    "Taxa Efetiva a.a. (%)": "Taxa Efetiva",
-                    "Total Aportado": "Aportado",
-                    "Total Resgatado": "Resgatado",
-                    "Rendimento Bruto": "Rend. Bruto",
-                    "Rentab. Bruta Período (%)": "Rentab. Período",
-                    "Rentab. Bruta Mês (%)": "Rentab. Mês",
-                    "Rentab. Bruta Ano (%)": "Rentab. Ano",
-                }
-            )
-
-            add_dataframe_table(
-                document,
-                gross_word_df,
-                font_size=6
-            )
-
         net_columns = [
             "Produto",
             "Valor Bruto",
@@ -964,6 +948,20 @@ def generate_word_report(
             comparison_df,
             net_columns
         )
+
+        if gross_df is not None and not gross_df.empty:
+            add_subheading(
+                document,
+                "Comparativo de Rentabilidade Bruta"
+            )
+
+            gross_word_df = prepare_dataframe_for_word(gross_df)
+
+            add_dataframe_table(
+                document,
+                gross_word_df,
+                font_size=7
+            )
 
         if net_df is not None and not net_df.empty:
             add_subheading(
@@ -990,6 +988,52 @@ def generate_word_report(
                 net_word_df,
                 font_size=6
             )
+
+        add_subheading(
+            document,
+            "Detalhamento Tributário do Fundo DI"
+        )
+
+        fund_tax_text = (
+            f"O Fundo DI foi simulado como {fund_type}. "
+            f"A aplicação do come-cotas foi considerada como "
+            f"{'ativa' if apply_come_cotas else 'inativa'} na simulação. "
+            f"A alíquota de come-cotas utilizada foi de "
+            f"{fund_come_cotas_rate * 100:.1f}% e a alíquota final de IR "
+            f"estimada para o resgate foi de {fund_final_ir_rate * 100:.1f}%."
+        )
+
+        add_paragraph(
+            document,
+            fund_tax_text
+        )
+
+        add_paragraph(
+            document,
+            f"No cenário simulado, o impacto estimado da taxa de administração "
+            f"foi de {format_currency(fund_admin_fee_impact)}. "
+            f"O come-cotas estimado foi de {format_currency(fund_come_cotas_tax)}, "
+            f"enquanto o IR complementar no resgate foi de "
+            f"{format_currency(fund_redemption_tax)}. O IR total estimado "
+            f"para o Fundo DI foi de {format_currency(fund_total_tax)}."
+        )
+
+        add_paragraph(
+            document,
+            f"O valor líquido final estimado do Fundo DI foi de "
+            f"{format_currency(fund_net_final_amount)}, com rentabilidade líquida "
+            f"de {format_percent(fund_net_return_percentage)} no período."
+        )
+
+        add_paragraph(
+            document,
+            "Essa leitura é importante porque fundos sujeitos ao come-cotas não "
+            "devem ser comparados apenas pelo percentual do CDI. A análise deve "
+            "considerar a classificação fiscal do fundo, a taxa de administração, "
+            "a antecipação semestral do Imposto de Renda, o prazo de permanência "
+            "e eventual complemento tributário no resgate."
+        )
+            
 
     # =========================================================
     # INTELIGÊNCIA DE MERCADO E FORESIGHT
