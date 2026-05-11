@@ -1,16 +1,53 @@
 from io import BytesIO
+import re
 
 import pandas as pd
 from docx import Document
-from docx.enum.section import WD_SECTION
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 from docx.shared import Inches, Pt, RGBColor
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 
 # =========================================================
-# FUNÇÕES AUXILIARES DE FORMATAÇÃO
+# IDENTIDADE VISUAL DO RELATÓRIO
 # =========================================================
+
+COLOR_NAVY = RGBColor(11, 31, 58)
+COLOR_BLUE = RGBColor(0, 92, 169)
+COLOR_WHITE = RGBColor(255, 255, 255)
+COLOR_DARK_GRAY = RGBColor(51, 51, 51)
+COLOR_MUTED_GRAY = RGBColor(100, 100, 100)
+
+COLOR_NAVY_HEX = "0B1F3A"
+COLOR_LIGHT_BLUE_HEX = "DCEEFF"
+COLOR_GRAY_HEX = "F4F6F8"
+COLOR_BORDER_HEX = "D9DEE5"
+COLOR_CARD_BORDER_HEX = "BFD7F2"
+
+FONT_TITLE = "Arial"
+FONT_BODY = "Arial"
+FONT_TABLE = "Arial"
+
+
+# =========================================================
+# FUNÇÕES DE TEXTO
+# =========================================================
+
+def clean_markdown(text):
+    if text is None:
+        return ""
+
+    text = str(text)
+    text = text.replace("**", "")
+    text = text.replace("__", "")
+    text = text.replace("###", "")
+    text = text.replace("##", "")
+    text = text.replace("#", "")
+
+    return text.strip()
+
 
 def format_currency(value):
     try:
@@ -19,7 +56,7 @@ def format_currency(value):
         formatted = formatted.replace(",", "X").replace(".", ",").replace("X", ".")
         return formatted
     except Exception:
-        return str(value)
+        return "" if value is None else str(value)
 
 
 def format_percent(value):
@@ -27,7 +64,7 @@ def format_percent(value):
         value = float(value)
         return f"{value:.2f}%".replace(".", ",")
     except Exception:
-        return str(value)
+        return "" if value is None else str(value)
 
 
 def format_number(value):
@@ -35,22 +72,144 @@ def format_number(value):
         value = float(value)
         return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
-        return str(value)
+        return "" if value is None else str(value)
+
+
+def normalize_brl_currency_and_percent_in_text(text):
+    """
+    Corrige valores e percentuais que venham em padrão americano dentro dos textos:
+    R$ 739,174.15 -> R$ 739.174,15
+    12.74% -> 12,74%
+    """
+
+    if text is None:
+        return ""
+
+    text = str(text)
+
+    currency_pattern = r"R\$\s?(\d{1,3}(?:,\d{3})+\.\d{2})"
+
+    def replace_currency(match):
+        raw_value = match.group(1)
+
+        try:
+            numeric_value = float(raw_value.replace(",", ""))
+            return format_currency(numeric_value)
+        except Exception:
+            return match.group(0)
+
+    text = re.sub(currency_pattern, replace_currency, text)
+
+    percent_pattern = r"(?<!\d)(\d+\.\d{1,4})%"
+
+    def replace_percent(match):
+        raw_value = match.group(1)
+
+        try:
+            numeric_value = float(raw_value)
+            return format_percent(numeric_value)
+        except Exception:
+            return match.group(0)
+
+    text = re.sub(percent_pattern, replace_percent, text)
+
+    return text
 
 
 def safe_text(value):
     if value is None:
         return ""
-    return str(value)
+
+    text = clean_markdown(value)
+    text = normalize_brl_currency_and_percent_in_text(text)
+
+    return str(text)
 
 
-def add_paragraph(document, text, bold=False, font_size=10):
-    paragraph = document.add_paragraph()
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+# =========================================================
+# FUNÇÕES DE FORMATAÇÃO DO WORD
+# =========================================================
+
+def shade_cell(cell, fill):
+    tc_pr = cell._tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:fill"), fill)
+    tc_pr.append(shd)
+
+
+def set_cell_border(
+    cell,
+    color=COLOR_BORDER_HEX,
+    size="4",
+    space="0"
+):
+    tc = cell._tc
+    tc_pr = tc.get_or_add_tcPr()
+
+    tc_borders = tc_pr.first_child_found_in("w:tcBorders")
+
+    if tc_borders is None:
+        tc_borders = OxmlElement("w:tcBorders")
+        tc_pr.append(tc_borders)
+
+    for edge in ("top", "left", "bottom", "right"):
+        tag = f"w:{edge}"
+        element = tc_borders.find(qn(tag))
+
+        if element is None:
+            element = OxmlElement(tag)
+            tc_borders.append(element)
+
+        element.set(qn("w:val"), "single")
+        element.set(qn("w:sz"), size)
+        element.set(qn("w:space"), space)
+        element.set(qn("w:color"), color)
+
+
+def set_cell_text(
+    cell,
+    text,
+    bold=False,
+    font_size=8,
+    color=None,
+    align="center"
+):
+    cell.text = ""
+
+    paragraph = cell.paragraphs[0]
+
+    if align == "left":
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    elif align == "right":
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    else:
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     run = paragraph.add_run(safe_text(text))
     run.bold = bold
+    run.font.name = FONT_TABLE
     run.font.size = Pt(font_size)
+
+    if color is not None:
+        run.font.color.rgb = color
+
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+
+def add_paragraph(document, text, bold=False, font_size=10):
+    """
+    Parágrafo padrão do relatório.
+    Agora todos os textos narrativos ficam alinhados à esquerda.
+    """
+
+    paragraph = document.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+    run = paragraph.add_run(safe_text(text))
+    run.bold = bold
+    run.font.name = FONT_BODY
+    run.font.size = Pt(font_size)
+    run.font.color.rgb = COLOR_DARK_GRAY
 
     return paragraph
 
@@ -61,8 +220,9 @@ def add_section_heading(document, number, title):
 
     run = paragraph.add_run(f"{number}. {title}")
     run.bold = True
+    run.font.name = FONT_TITLE
     run.font.size = Pt(14)
-    run.font.color.rgb = RGBColor(31, 78, 121)
+    run.font.color.rgb = COLOR_NAVY
 
     return paragraph
 
@@ -73,23 +233,11 @@ def add_subheading(document, title):
 
     run = paragraph.add_run(title)
     run.bold = True
-    run.font.size = Pt(12)
-    run.font.color.rgb = RGBColor(31, 78, 121)
+    run.font.name = FONT_BODY
+    run.font.size = Pt(11)
+    run.font.color.rgb = COLOR_BLUE
 
     return paragraph
-
-
-def set_cell_text(cell, text, bold=False, font_size=8):
-    cell.text = ""
-
-    paragraph = cell.paragraphs[0]
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    run = paragraph.add_run(safe_text(text))
-    run.bold = bold
-    run.font.size = Pt(font_size)
-
-    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
 
 def add_key_value_table(document, rows):
@@ -99,8 +247,27 @@ def add_key_value_table(document, rows):
 
     for label, value in rows:
         row_cells = table.add_row().cells
-        set_cell_text(row_cells[0], label, bold=True, font_size=8)
-        set_cell_text(row_cells[1], value, font_size=8)
+
+        shade_cell(row_cells[0], COLOR_GRAY_HEX)
+        set_cell_border(row_cells[0])
+        set_cell_border(row_cells[1])
+
+        set_cell_text(
+            row_cells[0],
+            label,
+            bold=True,
+            font_size=8,
+            color=COLOR_NAVY,
+            align="left"
+        )
+
+        set_cell_text(
+            row_cells[1],
+            value,
+            font_size=8,
+            color=COLOR_DARK_GRAY,
+            align="left"
+        )
 
     document.add_paragraph()
     return table
@@ -123,26 +290,44 @@ def add_dataframe_table(document, df, max_rows=None, font_size=7):
     header_cells = table.rows[0].cells
 
     for index, column in enumerate(table_df.columns):
+        cell = header_cells[index]
+
+        shade_cell(cell, COLOR_NAVY_HEX)
+        set_cell_border(cell, color=COLOR_NAVY_HEX, size="4")
+
         set_cell_text(
-            header_cells[index],
+            cell,
             str(column),
             bold=True,
-            font_size=font_size
+            font_size=font_size,
+            color=COLOR_WHITE
         )
 
-    for _, row in table_df.iterrows():
+    for row_index, (_, row) in enumerate(table_df.iterrows()):
         row_cells = table.add_row().cells
 
         for index, value in enumerate(row):
+            cell = row_cells[index]
+
+            if row_index % 2 == 0:
+                shade_cell(cell, COLOR_GRAY_HEX)
+
+            set_cell_border(cell)
+
             set_cell_text(
-                row_cells[index],
+                cell,
                 safe_text(value),
-                font_size=font_size
+                font_size=font_size,
+                color=COLOR_DARK_GRAY
             )
 
     document.add_paragraph()
     return table
 
+
+# =========================================================
+# PREPARAÇÃO DE DATAFRAMES
+# =========================================================
 
 def prepare_dataframe_for_word(df):
     if df is None or df.empty:
@@ -151,32 +336,57 @@ def prepare_dataframe_for_word(df):
     prepared_df = df.copy()
 
     for column in prepared_df.columns:
-        if prepared_df[column].dtype == "float64" or prepared_df[column].dtype == "int64":
-            if any(keyword in column.lower() for keyword in ["valor", "saldo", "aporte", "resgate", "rendimento", "ir", "bruto", "líquido", "liquido"]):
+        column_lower = str(column).lower()
+
+        if pd.api.types.is_numeric_dtype(prepared_df[column]):
+            if any(
+                keyword in column_lower
+                for keyword in [
+                    "valor",
+                    "saldo",
+                    "aporte",
+                    "resgate",
+                    "rendimento",
+                    "ir",
+                    "bruto",
+                    "líquido",
+                    "liquido",
+                ]
+            ):
                 prepared_df[column] = prepared_df[column].apply(format_currency)
-            elif any(keyword in column.lower() for keyword in ["%", "taxa", "rentab", "cdi"]):
+
+            elif any(
+                keyword in column_lower
+                for keyword in [
+                    "%",
+                    "taxa",
+                    "rentab",
+                    "cdi",
+                    "alíquota",
+                    "aliquota",
+                ]
+            ):
                 prepared_df[column] = prepared_df[column].apply(format_percent)
+
             else:
                 prepared_df[column] = prepared_df[column].apply(format_number)
 
     return prepared_df
 
 
+# =========================================================
+# GRÁFICO DA CURVA
+# =========================================================
+
 def create_curve_chart_image(curve_df):
-    """
-    Gera o gráfico da curva em imagem para inserir no Word.
-    Se matplotlib não estiver instalado, retorna None e o relatório segue com a tabela.
-    """
-
-    try:
-        import matplotlib.pyplot as plt
-    except Exception:
-        return None
-
     if curve_df is None or curve_df.empty:
         return None
 
     try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
         chart_df = curve_df.copy()
 
         chart_df["Vértice"] = chart_df["Vértice"].astype(str)
@@ -187,9 +397,12 @@ def create_curve_chart_image(curve_df):
         x_values = chart_df["Vértice"].tolist()
         y_values = chart_df["Taxa Selic Esperada (%)"].tolist()
 
+        if not x_values or not y_values:
+            return None
+
         selic_reference = y_values[0]
 
-        fig, ax = plt.subplots(figsize=(8.5, 4.3))
+        fig, ax = plt.subplots(figsize=(8.2, 4.2))
 
         ax.plot(
             x_values,
@@ -216,10 +429,14 @@ def create_curve_chart_image(curve_df):
                 fontsize=9
             )
 
-        ax.set_title("Curva Simplificada de Juros")
+        ax.set_title(
+            "Curva Simplificada de Juros",
+            fontsize=13,
+            fontweight="bold"
+        )
         ax.set_xlabel("Horizonte da expectativa")
         ax.set_ylabel("Taxa Selic esperada (%)")
-        ax.grid(True, axis="y", alpha=0.3)
+        ax.grid(True, axis="y", alpha=0.25)
         ax.legend(loc="best")
 
         image_stream = BytesIO()
@@ -234,12 +451,11 @@ def create_curve_chart_image(curve_df):
         return None
 
 
-def infer_curve_reading_from_market_intelligence(market_intelligence):
-    """
-    Garante que o Word consiga gerar a leitura da curva mesmo que o app
-    não tenha salvo movimento_curva, spread_final e leitura_movimento.
-    """
+# =========================================================
+# LEITURA DA CURVA
+# =========================================================
 
+def infer_curve_reading_from_market_intelligence(market_intelligence):
     if not market_intelligence:
         return None, None, None
 
@@ -276,9 +492,9 @@ def infer_curve_reading_from_market_intelligence(market_intelligence):
             leitura_movimento = (
                 "A curva está abrindo em relação à Selic atual. "
                 "Isso indica que as expectativas de mercado apontam para juros futuros "
-                "acima da taxa corrente. A leitura pode favorecer uma conversa consultiva "
-                "sobre proteção de taxa, prazo, alternativas prefixadas e adequação ao "
-                "perfil de liquidez do cliente."
+                "acima da taxa corrente, o que pode favorecer uma conversa consultiva "
+                "sobre proteção de taxa, prazo e alternativas prefixadas, sempre conforme "
+                "o perfil e a necessidade de liquidez do cliente."
             )
 
         elif spread_final < -limite_neutro:
@@ -286,16 +502,16 @@ def infer_curve_reading_from_market_intelligence(market_intelligence):
             leitura_movimento = (
                 "A curva está fechando em relação à Selic atual. "
                 "Isso indica que as expectativas de mercado apontam para juros futuros "
-                "abaixo da taxa corrente. A leitura reforça a importância de avaliar "
-                "risco de reinvestimento, horizonte da aplicação e momento de travamento "
-                "de taxa em alternativas prefixadas ou híbridas."
+                "abaixo da taxa corrente, o que reforça a importância de avaliar o risco "
+                "de reinvestimento, o horizonte da aplicação e o momento adequado para "
+                "travar taxas em produtos prefixados ou híbridos."
             )
 
         else:
             movimento_curva = "curva praticamente estável"
             leitura_movimento = (
                 "A curva está praticamente estável em relação à Selic atual. "
-                "Nesse cenário, a análise consultiva deve priorizar liquidez, prazo, "
+                "Nesse cenário, a leitura consultiva deve priorizar liquidez, prazo, "
                 "tributação, previsibilidade e aderência ao objetivo financeiro do cliente."
             )
 
@@ -306,7 +522,7 @@ def infer_curve_reading_from_market_intelligence(market_intelligence):
 
 
 # =========================================================
-# FUNÇÃO PRINCIPAL DO RELATÓRIO
+# FUNÇÃO PRINCIPAL
 # =========================================================
 
 def generate_word_report(
@@ -349,6 +565,26 @@ def generate_word_report(
 
     document = Document()
 
+    # =========================================================
+    # ESTILOS GERAIS
+    # =========================================================
+
+    styles = document.styles
+
+    styles["Normal"].font.name = FONT_BODY
+    styles["Normal"].font.size = Pt(10)
+    styles["Normal"].font.color.rgb = COLOR_DARK_GRAY
+
+    styles["Heading 1"].font.name = FONT_TITLE
+    styles["Heading 1"].font.size = Pt(14)
+    styles["Heading 1"].font.bold = True
+    styles["Heading 1"].font.color.rgb = COLOR_NAVY
+
+    styles["Heading 2"].font.name = FONT_BODY
+    styles["Heading 2"].font.size = Pt(11)
+    styles["Heading 2"].font.bold = True
+    styles["Heading 2"].font.color.rgb = COLOR_BLUE
+
     section = document.sections[0]
     section.top_margin = Inches(0.65)
     section.bottom_margin = Inches(0.65)
@@ -356,48 +592,97 @@ def generate_word_report(
     section.right_margin = Inches(0.65)
 
     # =========================================================
-    # CAPA / CABEÇALHO
+    # FAIXA SUPERIOR
     # =========================================================
 
-    title = document.add_paragraph()
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    top_band = document.add_table(rows=1, cols=1)
+    top_band.alignment = WD_TABLE_ALIGNMENT.CENTER
+    top_band.style = "Table Grid"
 
-    run = title.add_run("RELATÓRIO DE SIMULAÇÃO DE INVESTIMENTOS")
-    run.bold = True
-    run.font.size = Pt(18)
-    run.font.color.rgb = RGBColor(31, 78, 121)
+    top_cell = top_band.rows[0].cells[0]
+    shade_cell(top_cell, COLOR_NAVY_HEX)
+    set_cell_border(top_cell, color=COLOR_NAVY_HEX, size="0")
 
-    subtitle = document.add_paragraph()
-    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    top_cell.text = ""
+    top_paragraph = top_cell.paragraphs[0]
+    top_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    run = subtitle.add_run(
-        "Módulo CDI | Comparação de renda fixa, tributação e planejamento de movimentações"
-    )
-    run.font.size = Pt(10)
-
-    client_line = document.add_paragraph()
-    client_line.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    run = client_line.add_run(
-        f"Cliente: {client_name} | Assessor: {advisor_name} | "
-        f"Período: {start_date} a {end_date}"
-    )
-    run.font.size = Pt(9)
+    top_run = top_paragraph.add_run("SIMULADOR ESTRATÉGICO DE INVESTIMENTOS")
+    top_run.bold = True
+    top_run.font.name = FONT_BODY
+    top_run.font.size = Pt(8)
+    top_run.font.color.rgb = COLOR_WHITE
 
     document.add_paragraph()
+
+    # =========================================================
+    # CABEÇALHO EXECUTIVO
+    # =========================================================
+
+    header_table = document.add_table(rows=1, cols=2)
+    header_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    header_table.style = "Table Grid"
+
+    left_cell = header_table.rows[0].cells[0]
+    right_cell = header_table.rows[0].cells[1]
+
+    shade_cell(left_cell, "FFFFFF")
+    shade_cell(right_cell, "FFFFFF")
+    set_cell_border(left_cell)
+    set_cell_border(right_cell)
+
+    left_cell.text = ""
+    right_cell.text = ""
+
+    left_paragraph = left_cell.paragraphs[0]
+    left_paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+    title_run = left_paragraph.add_run(
+        "RELATÓRIO CONSULTIVO DE INVESTIMENTOS"
+    )
+    title_run.bold = True
+    title_run.font.name = FONT_TITLE
+    title_run.font.size = Pt(18)
+    title_run.font.color.rgb = COLOR_NAVY
+
+    subtitle_paragraph = left_cell.add_paragraph()
+    subtitle_run = subtitle_paragraph.add_run(
+        "Simulação, análise comparativa e leitura estratégica de mercado"
+    )
+    subtitle_run.font.name = FONT_BODY
+    subtitle_run.font.size = Pt(10)
+    subtitle_run.font.color.rgb = COLOR_BLUE
+
+    right_paragraph = right_cell.paragraphs[0]
+    right_paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    badge_run = right_paragraph.add_run("EXTRATO SIMULADO")
+    badge_run.bold = True
+    badge_run.font.name = FONT_BODY
+    badge_run.font.size = Pt(9)
+    badge_run.font.color.rgb = COLOR_BLUE
+
+    document.add_paragraph()
+
+    metadata_rows = [
+        ("Cliente", client_name),
+        ("Banker / Assessor", advisor_name),
+        ("Período", f"{start_date} a {end_date}"),
+        ("Modo de simulação", simulation_mode),
+    ]
+
+    add_key_value_table(document, metadata_rows)
 
     section_number = 1
 
     # =========================================================
-    # MELHOR ALTERNATIVA
+    # CÁLCULO DA MELHOR ALTERNATIVA
     # =========================================================
 
     best_product = ""
     best_net_value = 0
     best_net_profit = 0
     best_net_return = 0
-
-    worst_product = ""
     worst_net_value = 0
     difference_best_worst = 0
 
@@ -420,35 +705,99 @@ def generate_word_report(
             best_net_value = float(best_row.get(value_column, 0))
             best_net_profit = float(best_row.get(profit_column, 0))
             best_net_return = float(best_row.get(return_column, 0))
-
-            worst_product = safe_text(worst_row.get(product_column, ""))
             worst_net_value = float(worst_row.get(value_column, 0))
-
             difference_best_worst = best_net_value - worst_net_value
 
         except Exception:
             pass
 
     # =========================================================
-    # 1. VISÃO GERAL
+    # 1. PAINEL EXECUTIVO
     # =========================================================
 
     if report_options.get("visao_geral", True):
         add_section_heading(
             document,
             section_number,
-            "Visão Geral da Simulação"
+            "Painel Executivo"
         )
         section_number += 1
 
-        overview_rows = [
-            ("Valor inicial", format_currency(initial_amount)),
+        movimento_curva_card = "Não informado"
+
+        if market_intelligence is not None:
+            movimento_curva_tmp, _, _ = (
+                infer_curve_reading_from_market_intelligence(
+                    market_intelligence
+                )
+            )
+
+            if movimento_curva_tmp:
+                movimento_curva_card = movimento_curva_tmp.title()
+
+        executive_cards = [
+            ("Valor líquido final", format_currency(best_net_value)),
             ("Melhor alternativa", best_product),
-            ("Valor líquido", format_currency(best_net_value)),
             ("Rentabilidade líquida", format_percent(best_net_return)),
-            ("Modo de simulação", safe_text(simulation_mode)),
-            ("Período/Prazo", f"{start_date} a {end_date}"),
-            ("Rendimento líquido projetado", format_currency(best_net_profit)),
+            ("Ganho líquido projetado", format_currency(best_net_profit)),
+            ("Movimento da curva", movimento_curva_card),
+        ]
+
+        cards_table = document.add_table(rows=1, cols=5)
+        cards_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        cards_table.style = "Table Grid"
+
+        for index, (label, value) in enumerate(executive_cards):
+            cell = cards_table.rows[0].cells[index]
+
+            shade_cell(cell, COLOR_LIGHT_BLUE_HEX)
+            set_cell_border(cell, color=COLOR_CARD_BORDER_HEX, size="6")
+
+            cell.text = ""
+
+            p_label = cell.paragraphs[0]
+            p_label.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+            run_label = p_label.add_run(label.upper())
+            run_label.bold = True
+            run_label.font.name = FONT_BODY
+            run_label.font.size = Pt(7)
+            run_label.font.color.rgb = COLOR_BLUE
+
+            p_value = cell.add_paragraph()
+            p_value.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+            run_value = p_value.add_run(value)
+            run_value.bold = True
+            run_value.font.name = FONT_TITLE
+            run_value.font.size = Pt(11)
+            run_value.font.color.rgb = COLOR_NAVY
+
+        document.add_paragraph()
+
+    # =========================================================
+    # PREMISSAS UTILIZADAS
+    # =========================================================
+
+    if report_options.get("premissas", True):
+        add_section_heading(
+            document,
+            section_number,
+            "Premissas Utilizadas"
+        )
+        section_number += 1
+
+        premises_rows = [
+            ("Valor inicial", format_currency(initial_amount)),
+            ("CDI anual estimado", format_percent(annual_cdi_rate)),
+            ("Selic meta estimada", format_percent(selic_rate)),
+            ("TR anual estimada", format_percent(tr_rate)),
+            ("CDB / LC", f"{format_percent(cdb_percentage)} do CDI"),
+            ("LCI / LCA", f"{format_percent(lci_lca_percentage)} do CDI"),
+            ("Tesouro Selic", f"{format_percent(treasury_percentage)} do CDI"),
+            ("Custo anual Tesouro Selic", format_percent(treasury_annual_fee)),
+            ("Fundo DI", f"{format_percent(fund_percentage)} do CDI"),
+            ("Taxa de administração Fundo DI", format_percent(fund_annual_fee)),
         ]
 
         if cashflow_df is not None and not cashflow_df.empty:
@@ -461,60 +810,40 @@ def generate_word_report(
                     cashflow_df["Tipo"].str.lower() == "resgate"
                 ]["Valor"].astype(float).sum()
 
-                overview_rows.insert(
-                    6,
+                premises_rows.append(
                     ("Total aportado", format_currency(total_aportado))
                 )
 
-                overview_rows.insert(
-                    7,
+                premises_rows.append(
                     ("Total resgatado", format_currency(total_resgatado))
                 )
 
             except Exception:
                 pass
 
-        add_key_value_table(document, overview_rows)
-
-    # =========================================================
-    # 2. PREMISSAS
-    # =========================================================
-
-    if report_options.get("premissas", True):
-        add_section_heading(
-            document,
-            section_number,
-            "Premissas Utilizadas"
-        )
-        section_number += 1
-
-        premises_rows = [
-            ("CDI anual estimado", format_percent(annual_cdi_rate)),
-            ("Selic meta estimada", format_percent(selic_rate)),
-            ("TR anual estimada", format_percent(tr_rate)),
-            ("CDB / LC", f"{format_percent(cdb_percentage)} do CDI"),
-            ("LCI / LCA", f"{format_percent(lci_lca_percentage)} do CDI"),
-            ("Tesouro Selic", f"{format_percent(treasury_percentage)} do CDI"),
-            ("Custo anual Tesouro Selic", format_percent(treasury_annual_fee)),
-            ("Fundo DI", f"{format_percent(fund_percentage)} do CDI"),
-            ("Taxa de administração Fundo DI", format_percent(fund_annual_fee)),
-        ]
-
         add_key_value_table(document, premises_rows)
 
     # =========================================================
-    # 3. COMPARATIVO DOS PRODUTOS
+    # COMPARATIVO DETALHADO DOS PRODUTOS
     # =========================================================
 
     if report_options.get("comparativo", True):
         add_section_heading(
             document,
             section_number,
-            "Comparativo dos Produtos"
+            "Comparativo Detalhado dos Produtos"
         )
         section_number += 1
 
+        add_paragraph(
+            document,
+            "A tabela a seguir apresenta uma visão comparativa dos principais "
+            "produtos simulados, considerando rentabilidade líquida, tributação, "
+            "custos e resultado projetado para o período informado."
+        )
+
         comparison_word_df = prepare_dataframe_for_word(comparison_df)
+
         add_dataframe_table(
             document,
             comparison_word_df,
@@ -522,7 +851,7 @@ def generate_word_report(
         )
 
     # =========================================================
-    # INTELIGÊNCIA DE MERCADO
+    # INTELIGÊNCIA DE MERCADO E FORESIGHT
     # =========================================================
 
     if (
@@ -546,6 +875,10 @@ def generate_word_report(
 
         curve_shape = market_intelligence.get("curve_shape")
         market_reading = market_intelligence.get("reading")
+        llm_foresight = (
+            market_intelligence.get("llm_foresight")
+            or market_intelligence.get("llm_reading")
+        )
 
         if curve_shape:
             add_paragraph(
@@ -557,11 +890,22 @@ def generate_word_report(
         if market_reading:
             add_paragraph(
                 document,
-                safe_text(market_reading)
+                market_reading
+            )
+
+        if llm_foresight:
+            add_subheading(
+                document,
+                "Leitura Foresight Assistida por LLM"
+            )
+
+            add_paragraph(
+                document,
+                llm_foresight
             )
 
     # =========================================================
-    # CURVA DE JUROS
+    # CURVA SIMPLIFICADA DE JUROS
     # =========================================================
 
     if (
@@ -584,11 +928,19 @@ def generate_word_report(
                 paragraph = document.add_paragraph()
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 run = paragraph.add_run()
-                run.add_picture(chart_image, width=Inches(6.5))
+                run.add_picture(chart_image, width=Inches(6.4))
+                document.add_paragraph()
+            else:
+                add_paragraph(
+                    document,
+                    "O gráfico da curva não pôde ser gerado nesta execução. "
+                    "A tabela técnica da curva segue apresentada abaixo."
+                )
+
+            add_subheading(document, "Tabela técnica da curva")
 
             curve_word_df = prepare_dataframe_for_word(curve_df)
 
-            add_subheading(document, "Tabela técnica da curva")
             add_dataframe_table(
                 document,
                 curve_word_df,
@@ -626,7 +978,8 @@ def generate_word_report(
                 add_paragraph(
                     document,
                     f"O spread do último vértice frente à taxa corrente é de "
-                    f"{float(spread_final):.2f} ponto percentual."
+                    f"{str(round(float(spread_final), 2)).replace('.', ',')} "
+                    f"ponto percentual."
                 )
 
             if leitura_movimento:
@@ -649,6 +1002,7 @@ def generate_word_report(
             section_number += 1
 
             cashflow_word_df = prepare_dataframe_for_word(cashflow_df)
+
             add_dataframe_table(
                 document,
                 cashflow_word_df,
@@ -664,7 +1018,7 @@ def generate_word_report(
             add_section_heading(
                 document,
                 section_number,
-                "Resumo Mensal"
+                "Apêndice Técnico — Resumo Mensal"
             )
             section_number += 1
 
@@ -758,12 +1112,13 @@ def generate_word_report(
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    run = footer.add_run(
+    footer_run = footer.add_run(
         "Relatório gerado automaticamente pelo Simulador Estratégico de Investimentos | "
         "Uso interno e consultivo"
     )
-    run.font.size = Pt(7)
-    run.font.color.rgb = RGBColor(100, 100, 100)
+    footer_run.font.name = FONT_BODY
+    footer_run.font.size = Pt(7)
+    footer_run.font.color.rgb = COLOR_MUTED_GRAY
 
     file_stream = BytesIO()
     document.save(file_stream)
