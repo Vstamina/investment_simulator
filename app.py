@@ -11,6 +11,7 @@ from services.simulation_service import (
 from services.interpretation_service import generate_consultive_analysis
 from reports.word_report_generator import generate_word_report
 from services.market_intelligence_service import generate_market_intelligence
+from services.fund_tax_service import FundTaxService
 
 
 st.set_page_config(
@@ -414,6 +415,27 @@ with st.sidebar:
         format="%.2f"
     )
 
+fund_type = st.selectbox(
+    "Classificação fiscal do Fundo DI",
+    [
+        FundTaxService.LONG_TERM,
+        FundTaxService.SHORT_TERM,
+    ],
+    index=0,
+    help=(
+        "Fundos de longo prazo usam come-cotas de 15%. "
+        "Fundos de curto prazo usam come-cotas de 20%."
+    )
+)
+
+apply_come_cotas = st.checkbox(
+    "Aplicar come-cotas no Fundo DI",
+    value=True,
+    help=(
+        "O come-cotas é a antecipação semestral do IR, "
+        "normalmente em maio e novembro."
+    )
+)
 
 # =========================================================
 # CALENDÁRIO DE MOVIMENTAÇÕES
@@ -544,6 +566,137 @@ else:
     daily_df = pd.DataFrame()
     monthly_df = pd.DataFrame()
     evolution_x = "Mês"
+
+    # =========================================================
+# AJUSTE DO FUNDO DI COM COME-COTAS
+# =========================================================
+
+fund_tax_service = FundTaxService()
+
+annual_cdi_decimal = (
+    annual_cdi_rate / 100
+    if annual_cdi_rate > 1
+    else annual_cdi_rate
+)
+
+fund_cdi_decimal = fund_percentage / 100
+
+fund_admin_fee_decimal = fund_annual_fee / 100
+
+if simulation_mode == "Aportes e resgates por calendário":
+    fund_months = max(
+        1,
+        (end_date.year - start_date.year) * 12
+        + (end_date.month - start_date.month)
+    )
+else:
+    fund_months = int(months)
+
+fund_result = fund_tax_service.simulate_fund_di(
+    initial_amount=initial_amount,
+    annual_cdi_rate=annual_cdi_decimal,
+    fund_cdi_percentage=fund_cdi_decimal,
+    admin_fee_rate=fund_admin_fee_decimal,
+    months=fund_months,
+    fund_type=fund_type,
+    start_year=start_date.year,
+    start_month=start_date.month,
+    apply_come_cotas=apply_come_cotas,
+)
+
+# =========================================================
+# SUBSTITUIÇÃO DA LINHA DO FUNDO DI NO COMPARATIVO
+# =========================================================
+
+if not comparison_df.empty and "Produto" in comparison_df.columns:
+    fund_mask = comparison_df["Produto"].astype(str).str.contains(
+        "Fundo DI",
+        case=False,
+        na=False
+    )
+
+    if fund_mask.any():
+
+        if "Valor Bruto Final" in comparison_df.columns:
+            comparison_df.loc[
+                fund_mask,
+                "Valor Bruto Final"
+            ] = fund_result.gross_final_amount
+
+        if "Valor Líquido Final" in comparison_df.columns:
+            comparison_df.loc[
+                fund_mask,
+                "Valor Líquido Final"
+            ] = fund_result.net_final_amount
+
+        if "Lucro Líquido" in comparison_df.columns:
+            comparison_df.loc[
+                fund_mask,
+                "Lucro Líquido"
+            ] = fund_result.net_profit
+
+        if "Rentabilidade Líquida (%)" in comparison_df.columns:
+            comparison_df.loc[
+                fund_mask,
+                "Rentabilidade Líquida (%)"
+            ] = fund_result.net_return_percentage
+
+        if "IR Total" in comparison_df.columns:
+            comparison_df.loc[
+                fund_mask,
+                "IR Total"
+            ] = fund_result.total_tax
+
+        if "Come-cotas" in comparison_df.columns:
+            comparison_df.loc[
+                fund_mask,
+                "Come-cotas"
+            ] = fund_result.come_cotas_tax
+
+        if "IR no Resgate" in comparison_df.columns:
+            comparison_df.loc[
+                fund_mask,
+                "IR no Resgate"
+            ] = fund_result.redemption_tax
+
+        if "Taxa de Administração" in comparison_df.columns:
+            comparison_df.loc[
+                fund_mask,
+                "Taxa de Administração"
+            ] = fund_result.admin_fee_impact
+
+# =========================================================
+# DETALHAMENTO DO FUNDO DI
+# =========================================================
+
+with st.expander("Detalhamento tributário do Fundo DI"):
+    st.write("Classificação fiscal:", fund_result.fund_type)
+    st.write("Aplicar come-cotas:", "Sim" if apply_come_cotas else "Não")
+
+    st.write(
+        "Alíquota de come-cotas:",
+        "15%" if fund_result.fund_type == FundTaxService.LONG_TERM else "20%"
+    )
+
+    st.write(
+        "Alíquota final de IR no resgate:",
+        f"{fund_tax_service.get_final_ir_rate(fund_months * 30, fund_result.fund_type) * 100:.1f}%"
+    )
+
+    st.write("Valor bruto final:", round(fund_result.gross_final_amount, 2))
+    st.write("Valor líquido final:", round(fund_result.net_final_amount, 2))
+    st.write("Lucro líquido:", round(fund_result.net_profit, 2))
+    st.write(
+        "Impacto da taxa de administração:",
+        round(fund_result.admin_fee_impact, 2)
+    )
+    st.write("Come-cotas:", round(fund_result.come_cotas_tax, 2))
+    st.write("IR no resgate:", round(fund_result.redemption_tax, 2))
+    st.write("IR total:", round(fund_result.total_tax, 2))
+    st.write(
+        "Rentabilidade líquida %:",
+        round(fund_result.net_return_percentage, 2)
+    )
 
 
 # =========================================================
@@ -886,7 +1039,7 @@ if use_market_intelligence:
                 market_intelligence = generate_market_intelligence()
 
                 st.session_state["market_intelligence"] = market_intelligence
-                
+
                 market_intelligence = generate_market_intelligence()
 
             bacen_df = market_intelligence.get("bacen_df")
@@ -1153,30 +1306,235 @@ em relação à taxa corrente, caracterizando **{movimento_curva}**.
                         hide_index=True
                     )
 
+           # =========================================================
+            # CURVA SIMPLIFICADA DE JUROS
             # =========================================================
-            # LEITURA FORESIGHT
-            # =========================================================
 
-            st.markdown("#### Leitura Foresight")
+            st.markdown("#### Curva Simplificada de Juros")
 
-            if market_reading:
-                st.markdown(market_reading)
+            movimento_curva = None
+            spread_final = 0
+            leitura_movimento = ""
 
-                if movimento_curva:
-                    st.markdown(
-                        f"""
-**Leitura complementar da curva:** em relação à Selic atual, a estrutura observada indica **{movimento_curva}**. 
-O spread do último vértice frente à taxa corrente é de **{spread_final:.2f} ponto percentual**. 
-Essa informação ajuda a qualificar a conversa sobre pós-fixados, prefixados e produtos híbridos, especialmente na avaliação de prazo, liquidez, previsibilidade e risco de reinvestimento.
-"""
-                    )
+            if curve_df is None or curve_df.empty:
+                st.warning("Curva simplificada não disponível nesta execução.")
             else:
-                st.warning("Leitura foresight não gerada nesta execução.")
+                st.caption(
+                    f"Classificação da curva: {curve_shape}"
+                )
 
-        except Exception as error:
-            st.error("Erro ao carregar a inteligência de mercado.")
-            st.exception(error)
+                curve_chart_df = curve_df.copy()
 
+                curve_chart_df["Vértice"] = (
+                    curve_chart_df["Vértice"].astype(str)
+                )
+
+                curve_chart_df["Taxa Selic Esperada (%)"] = (
+                    curve_chart_df["Taxa Selic Esperada (%)"].astype(float)
+                )
+
+                selic_atual_referencia = curve_chart_df[
+                    "Taxa Selic Esperada (%)"
+                ].iloc[0]
+
+                curve_chart_df["Spread vs Selic Atual (p.p.)"] = (
+                    curve_chart_df["Taxa Selic Esperada (%)"]
+                    - selic_atual_referencia
+                )
+
+                curve_chart_df["Rótulo"] = curve_chart_df[
+                    "Taxa Selic Esperada (%)"
+                ].apply(
+                    lambda value: f"{value:.2f}%"
+                )
+
+                spread_final = curve_chart_df[
+                    "Spread vs Selic Atual (p.p.)"
+                ].iloc[-1]
+
+                limite_neutro = 0.10
+
+                if spread_final > limite_neutro:
+                    movimento_curva = "abertura da curva"
+                    leitura_movimento = (
+                        "A curva está abrindo em relação à Selic atual. "
+                        "Isso indica que as expectativas de mercado apontam para juros futuros "
+                        "acima da taxa corrente, o que pode favorecer uma conversa consultiva "
+                        "sobre proteção de taxa, prazo e alternativas prefixadas, sempre conforme "
+                        "o perfil e a necessidade de liquidez do cliente."
+                    )
+                elif spread_final < -limite_neutro:
+                    movimento_curva = "fechamento da curva"
+                    leitura_movimento = (
+                        "A curva está fechando em relação à Selic atual. "
+                        "Isso indica que as expectativas de mercado apontam para juros futuros "
+                        "abaixo da taxa corrente, o que reforça a importância de avaliar o risco "
+                        "de reinvestimento, o horizonte da aplicação e o momento adequado para "
+                        "travar taxas em produtos prefixados ou híbridos."
+                    )
+                else:
+                    movimento_curva = "curva praticamente estável"
+                    leitura_movimento = (
+                        "A curva está praticamente estável em relação à Selic atual. "
+                        "Nesse cenário, a leitura consultiva deve priorizar liquidez, prazo, "
+                        "tributação, previsibilidade e aderência ao objetivo financeiro do cliente."
+                    )
+
+                curve_fig = go.Figure()
+
+                curve_fig.add_trace(
+                    go.Scatter(
+                        x=curve_chart_df["Vértice"],
+                        y=curve_chart_df["Taxa Selic Esperada (%)"],
+                        mode="lines+markers+text",
+                        text=curve_chart_df["Rótulo"],
+                        textposition="top center",
+                        name="Selic esperada",
+                        line=dict(
+                            width=4,
+                            shape="spline"
+                        ),
+                        marker=dict(
+                            size=12,
+                            symbol="circle"
+                        ),
+                        fill="tozeroy",
+                        hovertemplate=(
+                            "<b>Vértice:</b> %{x}<br>"
+                            "<b>Taxa Selic esperada:</b> %{y:.2f}%"
+                            "<extra></extra>"
+                        )
+                    )
+                )
+
+                curve_fig.add_trace(
+                    go.Scatter(
+                        x=curve_chart_df["Vértice"],
+                        y=[selic_atual_referencia] * len(curve_chart_df),
+                        mode="lines",
+                        name="Selic atual",
+                        line=dict(
+                            width=2,
+                            dash="dash"
+                        ),
+                        hovertemplate=(
+                            "<b>Referência:</b> Selic atual<br>"
+                            "<b>Taxa:</b> %{y:.2f}%"
+                            "<extra></extra>"
+                        )
+                    )
+                )
+
+                curve_fig.update_layout(
+                    title={
+                        "text": (
+                            f"Curva Simplificada de Juros — "
+                            f"{str(curve_shape).title()} | "
+                            f"{movimento_curva.title()}"
+                        ),
+                        "x": 0.03,
+                        "xanchor": "left"
+                    },
+                    height=500,
+                    template="plotly_white",
+                    xaxis_title="Horizonte da expectativa",
+                    yaxis_title="Taxa Selic esperada (%)",
+                    showlegend=True,
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    ),
+                    margin=dict(
+                        t=100,
+                        r=30,
+                        l=40,
+                        b=60
+                    ),
+                    font=dict(
+                        size=12
+                    )
+                )
+
+                curve_fig.update_yaxes(
+                    ticksuffix="%",
+                    showgrid=True,
+                    zeroline=False
+                )
+
+                curve_fig.update_xaxes(
+                    showgrid=False
+                )
+
+                st.plotly_chart(
+                    curve_fig,
+                    width="stretch"
+                )
+
+                curve_values = curve_chart_df[
+                    "Taxa Selic Esperada (%)"
+                ].tolist()
+
+                curve_labels = curve_chart_df[
+                    "Vértice"
+                ].tolist()
+
+                if len(curve_values) >= 3:
+                    col_curve_1, col_curve_2, col_curve_3, col_curve_4 = (
+                        st.columns(4)
+                    )
+
+                    col_curve_1.metric(
+                        "Selic atual",
+                        f"{selic_atual_referencia:.2f}%"
+                    )
+
+                    col_curve_2.metric(
+                        curve_labels[1],
+                        f"{curve_values[1]:.2f}%",
+                        delta=(
+                            f"{curve_values[1] - selic_atual_referencia:.2f} p.p."
+                        )
+                    )
+
+                    col_curve_3.metric(
+                        curve_labels[2],
+                        f"{curve_values[2]:.2f}%",
+                        delta=(
+                            f"{curve_values[2] - selic_atual_referencia:.2f} p.p."
+                        )
+                    )
+
+                    col_curve_4.metric(
+                        "Movimento",
+                        movimento_curva.title(),
+                        delta=f"{spread_final:.2f} p.p."
+                    )
+
+                st.markdown("##### Leitura da curva em relação à Selic atual")
+
+                st.markdown(
+                    f"""
+A Selic atual foi utilizada como referência da curva. 
+O último vértice da curva apresenta diferença de **{spread_final:.2f} ponto percentual** 
+em relação à taxa corrente, caracterizando **{movimento_curva}**.
+
+{leitura_movimento}
+"""
+                )
+
+                with st.expander("Ver tabela técnica da curva"):
+                    st.dataframe(
+                        curve_chart_df,
+                        width="stretch",
+                        hide_index=True
+                    )
+        except Exception as e:
+            st.warning(
+                f"Não foi possível carregar a inteligência de mercado: {e}"
+            )
 
 # =========================================================
 # RELATÓRIO CONSULTIVO
@@ -1193,6 +1551,7 @@ if simulation_mode == "Aportes e resgates por calendário":
 else:
     report_cashflow_df = pd.DataFrame()
     report_monthly_df = pd.DataFrame()
+
 
 # =========================================================
 # OPÇÕES DO RELATÓRIO
