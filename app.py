@@ -9,6 +9,7 @@ from services.simulation_service import (
 )
 from services.interpretation_service import generate_consultive_analysis
 from reports.word_report_generator import generate_word_report
+from services.market_intelligence_service import generate_market_intelligence
 
 
 st.set_page_config(
@@ -353,6 +354,15 @@ with st.sidebar:
 
     st.divider()
 
+    st.subheader("Inteligência de Mercado")
+
+    use_market_intelligence = st.checkbox(
+        "Ativar leitura Bacen/Focus/Foresight",
+        value=False
+    )
+
+    st.divider()
+
     st.subheader("Parâmetros por Produto")
 
     cdb_percentage = st.number_input(
@@ -584,10 +594,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+# Copia a base calculada para criar a versão formatada da tabela
 display_df = comparison_df.copy()
 
+# Colunas financeiras que serão exibidas em reais
 currency_columns = [
     "Valor Inicial",
+    "Valor Investido",
     "Total Aportado",
     "Total Resgatado",
     "Valor Bruto",
@@ -597,6 +610,7 @@ currency_columns = [
     "Rendimento Líquido",
 ]
 
+# Colunas percentuais que serão exibidas com %
 percent_columns = [
     "% CDI",
     "Taxa Efetiva a.a. (%)",
@@ -606,20 +620,51 @@ percent_columns = [
     "Rentab. Líq. Ano (%)",
 ]
 
+# Formata valores monetários
 for col in currency_columns:
     if col in display_df.columns:
         display_df[col] = display_df[col].apply(format_currency)
 
+# Formata percentuais
 for col in percent_columns:
     if col in display_df.columns:
         display_df[col] = display_df[col].apply(format_percent)
 
+# Tabela executiva: versão mais limpa para visualização principal
+executive_columns = [
+    "Produto",
+    "Taxa Efetiva a.a. (%)",
+    "Valor Inicial",
+    "Valor Investido",
+    "Total Aportado",
+    "Total Resgatado",
+    "Valor Líquido",
+    "Rendimento Líquido",
+    "Rentab. Líq. Período (%)",
+    "Rentab. Líq. Ano (%)",
+    "Tributável",
+]
+
+available_executive_columns = [
+    column for column in executive_columns if column in display_df.columns
+]
+
+executive_df = display_df[available_executive_columns]
+
 st.dataframe(
-    display_df,
+    executive_df,
     use_container_width=True,
     hide_index=True
 )
 
+# Tabela completa: fica disponível para conferência técnica
+with st.expander("Ver tabela técnica completa"):
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True
+    )
+    
 
 # =========================================================
 # EVOLUÇÃO PATRIMONIAL
@@ -813,6 +858,85 @@ st.markdown(
 st.markdown(analysis)
 
 
+# =========================================================
+# INTELIGÊNCIA DE MERCADO E FORESIGHT
+# =========================================================
+
+if use_market_intelligence:
+    st.markdown(
+        '<div class="section-title">Inteligência de Mercado e Foresight</div>',
+        unsafe_allow_html=True
+    )
+
+    st.info(
+        "Módulo experimental ativado. Esta camada busca dados públicos do Bacen/Focus "
+        "e gera uma leitura consultiva inicial, sem alterar os cálculos da simulação CDI."
+    )
+
+    update_market_data = st.button(
+        "Atualizar inteligência de mercado",
+        type="primary"
+    )
+
+    if update_market_data:
+        try:
+            with st.spinner("Buscando dados públicos de mercado..."):
+                market_intelligence = generate_market_intelligence()
+
+            bacen_df = market_intelligence.get("bacen_df")
+            focus_df = market_intelligence.get("focus_df")
+            curve_df = market_intelligence.get("curve_df")
+            curve_shape = market_intelligence.get("curve_shape")
+            market_reading = market_intelligence.get("reading")
+
+            st.success("Inteligência de mercado carregada com sucesso.")
+
+            st.markdown("#### Dados Bacen")
+
+            if bacen_df is None or bacen_df.empty:
+                st.warning("Dados Bacen não disponíveis nesta execução.")
+            else:
+                st.dataframe(
+                    bacen_df,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            st.markdown("#### Expectativas Focus")
+
+            if focus_df is None or focus_df.empty:
+                st.warning("Expectativas Focus não disponíveis nesta execução.")
+            else:
+                st.dataframe(
+                    focus_df,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            st.markdown("#### Curva Simplificada de Juros")
+
+            if curve_df is None or curve_df.empty:
+                st.warning("Curva simplificada não disponível nesta execução.")
+            else:
+                st.caption(f"Classificação da curva: {curve_shape}")
+                st.dataframe(
+                    curve_df,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            st.markdown("#### Leitura Foresight")
+
+            if market_reading:
+                st.markdown(market_reading)
+            else:
+                st.warning("Leitura foresight não gerada nesta execução.")
+
+        except Exception as error:
+            st.error("Erro ao carregar a inteligência de mercado.")
+            st.exception(error)
+
+            
 # =========================================================
 # RELATÓRIO CONSULTIVO
 # =========================================================
