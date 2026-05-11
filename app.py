@@ -1190,6 +1190,76 @@ else:
     report_cashflow_df = pd.DataFrame()
     report_monthly_df = pd.DataFrame()
 
+# =========================================================
+# OPÇÕES DO RELATÓRIO
+# =========================================================
+
+st.markdown("### Opções do relatório")
+
+with st.expander("Escolher o que incluir no relatório", expanded=False):
+    incluir_visao_geral = st.checkbox(
+        "Visão geral da simulação",
+        value=True
+    )
+
+    incluir_premissas = st.checkbox(
+        "Premissas utilizadas",
+        value=True
+    )
+
+    incluir_comparativo = st.checkbox(
+        "Comparativo dos produtos",
+        value=True
+    )
+
+    incluir_calendario = st.checkbox(
+        "Calendário de movimentações",
+        value=True
+    )
+
+    incluir_resumo_mensal = st.checkbox(
+        "Resumo mensal",
+        value=False
+    )
+
+    incluir_leitura_consultiva = st.checkbox(
+        "Leitura consultiva",
+        value=True
+    )
+
+    incluir_inteligencia_mercado = st.checkbox(
+        "Inteligência de mercado Bacen/Focus",
+        value=True
+    )
+
+    incluir_curva_juros = st.checkbox(
+        "Curva simplificada de juros",
+        value=True
+    )
+
+    incluir_leitura_foresight = st.checkbox(
+        "Leitura Foresight da curva",
+        value=True
+    )
+
+    incluir_aviso_tecnico = st.checkbox(
+        "Aviso técnico",
+        value=True
+    )
+
+report_options = {
+    "visao_geral": incluir_visao_geral,
+    "premissas": incluir_premissas,
+    "comparativo": incluir_comparativo,
+    "calendario": incluir_calendario,
+    "resumo_mensal": incluir_resumo_mensal,
+    "leitura_consultiva": incluir_leitura_consultiva,
+    "inteligencia_mercado": incluir_inteligencia_mercado,
+    "curva_juros": incluir_curva_juros,
+    "leitura_foresight": incluir_leitura_foresight,
+    "aviso_tecnico": incluir_aviso_tecnico,
+}
+
 word_file = generate_word_report(
     client_name=client_name,
     advisor_name=advisor_name,
@@ -1211,6 +1281,12 @@ word_file = generate_word_report(
     cashflow_df=report_cashflow_df,
     monthly_df=report_monthly_df,
     consultive_analysis=analysis,
+    market_intelligence=(
+        market_intelligence
+        if "market_intelligence" in locals()
+        else None
+    ),
+    report_options=report_options,
 )
 
 file_name = f"relatorio_simulacao_{client_name.replace(' ', '_').lower()}.docx"
