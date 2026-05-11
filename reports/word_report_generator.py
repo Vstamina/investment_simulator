@@ -536,6 +536,54 @@ def infer_curve_reading_from_market_intelligence(market_intelligence):
 
 
 # =========================================================
+# DRIVERS DE MERCADO QUE AFETAM O CDI
+# =========================================================
+
+def build_cdi_market_drivers_reading(market_intelligence):
+    if market_intelligence is None:
+        return (
+            "A leitura dos drivers de mercado não foi gerada porque a inteligência "
+            "de mercado não foi carregada nesta execução."
+        )
+
+    curve_shape = market_intelligence.get("curve_shape", "não informada")
+
+    movimento_curva, spread_final, _ = (
+        infer_curve_reading_from_market_intelligence(market_intelligence)
+    )
+
+    if movimento_curva is None:
+        movimento_curva = "movimento não classificado"
+
+    spread_text = "não disponível"
+
+    if spread_final is not None:
+        try:
+            spread_text = (
+                f"{str(round(float(spread_final), 2)).replace('.', ',')} "
+                "ponto percentual"
+            )
+        except Exception:
+            spread_text = "não disponível"
+
+    reading = f"""
+A trajetória do CDI deve ser interpretada a partir de um conjunto de fatores macroeconômicos, microeconômicos e de mercado. Nesta simulação, a curva simplificada foi classificada como {curve_shape}, com leitura de {movimento_curva} em relação à Selic atual. O spread do último vértice frente à taxa corrente é de {spread_text}.
+
+Do ponto de vista macroeconômico, a inflação esperada é uma das variáveis centrais. Quando as expectativas de IPCA permanecem pressionadas, o Banco Central tende a ter menos espaço para reduzir a Selic, o que pode manter o CDI em patamar elevado por mais tempo. Em cenário de inflação em desaceleração, por outro lado, aumenta a probabilidade de compressão futura do CDI e cresce a importância de avaliar risco de reinvestimento.
+
+A política monetária também deve ser lida em conjunto com câmbio, atividade econômica e risco fiscal. A depreciação cambial pode pressionar preços e limitar cortes de juros. A atividade econômica aquecida pode sustentar inflação de serviços, enquanto desaceleração do PIB pode ampliar o espaço para redução da Selic. A piora da percepção fiscal pode abrir a curva de juros, aumentando o prêmio exigido para prazos mais longos, mesmo sem alteração imediata da taxa básica.
+
+No mercado de crédito privado, movimentos de liquidação de títulos, resgates em fundos ou abertura de spreads podem alterar a relação entre retorno esperado, risco e liquidez. Em momentos de estresse, os ativos privados podem exigir maior prêmio, mas também demandam análise mais cuidadosa de emissor, prazo, garantias, liquidez secundária e risco de marcação.
+
+Cenários de juros elevados tendem a atrair investidores para posições de renda fixa, especialmente produtos pós-fixados, Tesouro Selic, CDBs, LCIs, LCAs e fundos DI. Esse fluxo pode reforçar a demanda por instrumentos atrelados ao CDI, mas também pode reduzir prêmios em ativos mais disputados. Quando há expectativa consistente de queda da Selic, produtos prefixados, híbridos ou indexados à inflação podem ganhar relevância na conversa consultiva, desde que o horizonte de investimento e a tolerância a risco sejam compatíveis.
+
+Assim, a análise consultiva não deve considerar apenas a taxa projetada. Ela deve ponderar liquidez, prazo, tributação, risco de crédito, qualidade do emissor, comportamento da inflação, risco fiscal, curva de juros, possibilidade de reinvestimento a taxas menores e risco de oportunidade caso o cenário de juros se altere.
+"""
+
+    return reading.strip()
+
+
+# =========================================================
 # FUNÇÃO PRINCIPAL
 # =========================================================
 
@@ -880,6 +928,18 @@ def generate_word_report(
 
             gross_word_df = prepare_dataframe_for_word(gross_df)
 
+            gross_word_df = gross_word_df.rename(
+                columns={
+                    "Taxa Efetiva a.a. (%)": "Taxa Efetiva",
+                    "Total Aportado": "Aportado",
+                    "Total Resgatado": "Resgatado",
+                    "Rendimento Bruto": "Rend. Bruto",
+                    "Rentab. Bruta Período (%)": "Rentab. Período",
+                    "Rentab. Bruta Mês (%)": "Rentab. Mês",
+                    "Rentab. Bruta Ano (%)": "Rentab. Ano",
+                }
+            )
+
             add_dataframe_table(
                 document,
                 gross_word_df,
@@ -916,12 +976,12 @@ def generate_word_report(
             net_word_df = net_word_df.rename(
                 columns={
                     "IR": "IR (R$)",
+                    "Alíq. IR (%)": "Alíquota IR",
                     "Rendimento Bruto": "Rend. Bruto",
                     "Rendimento Líquido": "Rend. Líquido",
                     "Rentab. Líq. Período (%)": "Rentab. Período",
                     "Rentab. Líq. Mês (%)": "Rentab. Mês",
                     "Rentab. Líq. Ano (%)": "Rentab. Ano",
-                    "Alíq. IR (%)": "Alíquota IR",
                 }
             )
 
@@ -978,6 +1038,20 @@ def generate_word_report(
                     document,
                     market_reading
                 )
+
+            add_subheading(
+                document,
+                "Drivers de Mercado que Afetam o CDI"
+            )
+
+            cdi_market_drivers_reading = build_cdi_market_drivers_reading(
+                market_intelligence
+            )
+
+            add_paragraph(
+                document,
+                cdi_market_drivers_reading
+            )
 
             if llm_foresight:
                 add_subheading(
