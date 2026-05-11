@@ -197,11 +197,6 @@ def set_cell_text(
 
 
 def add_paragraph(document, text, bold=False, font_size=10):
-    """
-    Parágrafo padrão do relatório.
-    Agora todos os textos narrativos ficam alinhados à esquerda.
-    """
-
     paragraph = document.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
@@ -285,6 +280,7 @@ def add_dataframe_table(document, df, max_rows=None, font_size=7):
 
     table = document.add_table(rows=1, cols=len(table_df.columns))
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = True
     table.style = "Table Grid"
 
     header_cells = table.rows[0].cells
@@ -329,6 +325,18 @@ def add_dataframe_table(document, df, max_rows=None, font_size=7):
 # PREPARAÇÃO DE DATAFRAMES
 # =========================================================
 
+def select_existing_columns(df, columns):
+    if df is None or df.empty:
+        return df
+
+    existing_columns = [
+        column for column in columns
+        if column in df.columns
+    ]
+
+    return df[existing_columns].copy()
+
+
 def prepare_dataframe_for_word(df):
     if df is None or df.empty:
         return df
@@ -339,13 +347,32 @@ def prepare_dataframe_for_word(df):
         column_lower = str(column).lower()
 
         if pd.api.types.is_numeric_dtype(prepared_df[column]):
+
             if any(
+                keyword in column_lower
+                for keyword in [
+                    "% cdi",
+                    "cdi",
+                    "taxa",
+                    "rentab",
+                    "alíq",
+                    "aliq",
+                    "alíquota",
+                    "aliquota",
+                    "%",
+                ]
+            ):
+                prepared_df[column] = prepared_df[column].apply(format_percent)
+
+            elif any(
                 keyword in column_lower
                 for keyword in [
                     "valor",
                     "saldo",
                     "aporte",
+                    "aportado",
                     "resgate",
+                    "resgatado",
                     "rendimento",
                     "ir",
                     "bruto",
@@ -354,19 +381,6 @@ def prepare_dataframe_for_word(df):
                 ]
             ):
                 prepared_df[column] = prepared_df[column].apply(format_currency)
-
-            elif any(
-                keyword in column_lower
-                for keyword in [
-                    "%",
-                    "taxa",
-                    "rentab",
-                    "cdi",
-                    "alíquota",
-                    "aliquota",
-                ]
-            ):
-                prepared_df[column] = prepared_df[column].apply(format_percent)
 
             else:
                 prepared_df[column] = prepared_df[column].apply(format_number)
@@ -565,10 +579,6 @@ def generate_word_report(
 
     document = Document()
 
-    # =========================================================
-    # ESTILOS GERAIS
-    # =========================================================
-
     styles = document.styles
 
     styles["Normal"].font.name = FONT_BODY
@@ -712,7 +722,7 @@ def generate_word_report(
             pass
 
     # =========================================================
-    # 1. PAINEL EXECUTIVO
+    # PAINEL EXECUTIVO
     # =========================================================
 
     if report_options.get("visao_geral", True):
@@ -824,40 +834,108 @@ def generate_word_report(
         add_key_value_table(document, premises_rows)
 
     # =========================================================
-    # COMPARATIVO DETALHADO DOS PRODUTOS
+    # COMPARATIVO DOS PRODUTOS
     # =========================================================
 
     if report_options.get("comparativo", True):
         add_section_heading(
             document,
             section_number,
-            "Comparativo Detalhado dos Produtos"
+            "Comparativo dos Produtos"
         )
         section_number += 1
 
         add_paragraph(
             document,
-            "A tabela a seguir apresenta uma visão comparativa dos principais "
-            "produtos simulados, considerando rentabilidade líquida, tributação, "
-            "custos e resultado projetado para o período informado."
+            "As tabelas a seguir organizam a comparação entre os produtos simulados "
+            "em duas leituras complementares: resultado bruto e resultado líquido. "
+            "Essa separação melhora a leitura do impacto da tributação, dos custos "
+            "e da rentabilidade final projetada."
         )
 
-        comparison_word_df = prepare_dataframe_for_word(comparison_df)
+        gross_columns = [
+            "Produto",
+            "% CDI",
+            "Taxa Efetiva a.a. (%)",
+            "Valor Inicial",
+            "Total Aportado",
+            "Total Resgatado",
+            "Valor Bruto",
+            "Rendimento Bruto",
+            "Rentab. Bruta Período (%)",
+            "Rentab. Bruta Mês (%)",
+            "Rentab. Bruta Ano (%)",
+        ]
 
-        add_dataframe_table(
-            document,
-            comparison_word_df,
-            font_size=6
+        gross_df = select_existing_columns(
+            comparison_df,
+            gross_columns
         )
+
+        if gross_df is not None and not gross_df.empty:
+            add_subheading(
+                document,
+                "Comparativo de Rentabilidade Bruta"
+            )
+
+            gross_word_df = prepare_dataframe_for_word(gross_df)
+
+            add_dataframe_table(
+                document,
+                gross_word_df,
+                font_size=6
+            )
+
+        net_columns = [
+            "Produto",
+            "Valor Bruto",
+            "Rendimento Bruto",
+            "IR",
+            "Alíq. IR (%)",
+            "Valor Líquido",
+            "Rendimento Líquido",
+            "Rentab. Líq. Período (%)",
+            "Rentab. Líq. Mês (%)",
+            "Rentab. Líq. Ano (%)",
+            "Tributável",
+        ]
+
+        net_df = select_existing_columns(
+            comparison_df,
+            net_columns
+        )
+
+        if net_df is not None and not net_df.empty:
+            add_subheading(
+                document,
+                "Comparativo de Rentabilidade Líquida"
+            )
+
+            net_word_df = prepare_dataframe_for_word(net_df)
+
+            net_word_df = net_word_df.rename(
+                columns={
+                    "IR": "IR (R$)",
+                    "Rendimento Bruto": "Rend. Bruto",
+                    "Rendimento Líquido": "Rend. Líquido",
+                    "Rentab. Líq. Período (%)": "Rentab. Período",
+                    "Rentab. Líq. Mês (%)": "Rentab. Mês",
+                    "Rentab. Líq. Ano (%)": "Rentab. Ano",
+                    "Alíq. IR (%)": "Alíquota IR",
+                }
+            )
+
+            add_dataframe_table(
+                document,
+                net_word_df,
+                font_size=6
+            )
 
     # =========================================================
     # INTELIGÊNCIA DE MERCADO E FORESIGHT
     # =========================================================
 
-    if (
-        report_options.get("inteligencia_mercado", True)
-        and market_intelligence is not None
-    ):
+    if report_options.get("inteligencia_mercado", True):
         add_section_heading(
             document,
             section_number,
@@ -865,127 +943,154 @@ def generate_word_report(
         )
         section_number += 1
 
-        add_paragraph(
-            document,
-            "Os dados públicos do Banco Central e as expectativas do Boletim Focus "
-            "foram incorporados à simulação para apoiar a leitura macroeconômica "
-            "e qualificar a análise consultiva. Esta camada não altera os cálculos "
-            "da simulação CDI, mas amplia a contextualização da decisão."
-        )
-
-        curve_shape = market_intelligence.get("curve_shape")
-        market_reading = market_intelligence.get("reading")
-        llm_foresight = (
-            market_intelligence.get("llm_foresight")
-            or market_intelligence.get("llm_reading")
-        )
-
-        if curve_shape:
+        if market_intelligence is None:
             add_paragraph(
                 document,
-                f"Classificação da curva: {curve_shape}.",
-                bold=True
+                "A inteligência de mercado não foi carregada nesta execução. "
+                "Para incluir dados Bacen/Focus/Foresight, ative o módulo no app, "
+                "clique em 'Atualizar inteligência de mercado' e gere o relatório novamente."
             )
-
-        if market_reading:
+        else:
             add_paragraph(
                 document,
-                market_reading
+                "Os dados públicos do Banco Central e as expectativas do Boletim Focus "
+                "foram incorporados à simulação para apoiar a leitura macroeconômica "
+                "e qualificar a análise consultiva. Esta camada não altera os cálculos "
+                "da simulação CDI, mas amplia a contextualização da decisão."
             )
 
-        if llm_foresight:
-            add_subheading(
-                document,
-                "Leitura Foresight Assistida por LLM"
+            curve_shape = market_intelligence.get("curve_shape")
+            market_reading = market_intelligence.get("reading")
+            llm_foresight = (
+                market_intelligence.get("llm_foresight")
+                or market_intelligence.get("llm_reading")
             )
 
-            add_paragraph(
-                document,
-                llm_foresight
-            )
+            if curve_shape:
+                add_paragraph(
+                    document,
+                    f"Classificação da curva: {curve_shape}.",
+                    bold=True
+                )
+
+            if market_reading:
+                add_paragraph(
+                    document,
+                    market_reading
+                )
+
+            if llm_foresight:
+                add_subheading(
+                    document,
+                    "Leitura Foresight Assistida por LLM"
+                )
+
+                add_paragraph(
+                    document,
+                    llm_foresight
+                )
 
     # =========================================================
     # CURVA SIMPLIFICADA DE JUROS
     # =========================================================
 
-    if (
-        report_options.get("curva_juros", True)
-        and market_intelligence is not None
-    ):
-        curve_df = market_intelligence.get("curve_df")
+    if report_options.get("curva_juros", True):
+        add_section_heading(
+            document,
+            section_number,
+            "Curva Simplificada de Juros"
+        )
+        section_number += 1
 
-        if curve_df is not None and not curve_df.empty:
-            add_section_heading(
+        if market_intelligence is None:
+            add_paragraph(
                 document,
-                section_number,
-                "Curva Simplificada de Juros"
+                "A curva simplificada de juros não foi carregada nesta execução. "
+                "Para gerar esta seção com gráfico e tabela, atualize a inteligência "
+                "de mercado antes de baixar o relatório."
             )
-            section_number += 1
+        else:
+            curve_df = market_intelligence.get("curve_df")
 
-            chart_image = create_curve_chart_image(curve_df)
-
-            if chart_image is not None:
-                paragraph = document.add_paragraph()
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                run = paragraph.add_run()
-                run.add_picture(chart_image, width=Inches(6.4))
-                document.add_paragraph()
-            else:
+            if curve_df is None or curve_df.empty:
                 add_paragraph(
                     document,
-                    "O gráfico da curva não pôde ser gerado nesta execução. "
-                    "A tabela técnica da curva segue apresentada abaixo."
+                    "A curva simplificada de juros não está disponível nesta execução."
                 )
+            else:
+                chart_image = create_curve_chart_image(curve_df)
 
-            add_subheading(document, "Tabela técnica da curva")
+                if chart_image is not None:
+                    paragraph = document.add_paragraph()
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run = paragraph.add_run()
+                    run.add_picture(chart_image, width=Inches(6.4))
+                    document.add_paragraph()
+                else:
+                    add_paragraph(
+                        document,
+                        "O gráfico da curva não pôde ser gerado nesta execução. "
+                        "A tabela técnica da curva segue apresentada abaixo."
+                    )
 
-            curve_word_df = prepare_dataframe_for_word(curve_df)
+                add_subheading(document, "Tabela técnica da curva")
 
-            add_dataframe_table(
-                document,
-                curve_word_df,
-                font_size=8
-            )
+                curve_word_df = prepare_dataframe_for_word(curve_df)
+
+                add_dataframe_table(
+                    document,
+                    curve_word_df,
+                    font_size=8
+                )
 
     # =========================================================
     # LEITURA FORESIGHT DA CURVA
     # =========================================================
 
-    if (
-        report_options.get("leitura_foresight", True)
-        and market_intelligence is not None
-    ):
-        movimento_curva, spread_final, leitura_movimento = (
-            infer_curve_reading_from_market_intelligence(market_intelligence)
+    if report_options.get("leitura_foresight", True):
+        add_section_heading(
+            document,
+            section_number,
+            "Leitura Foresight da Curva"
         )
+        section_number += 1
 
-        if movimento_curva:
-            add_section_heading(
-                document,
-                section_number,
-                "Leitura Foresight da Curva"
-            )
-            section_number += 1
-
+        if market_intelligence is None:
             add_paragraph(
                 document,
-                f"Em relação à Selic atual, a estrutura observada indica "
-                f"{movimento_curva}.",
-                bold=True
+                "A leitura foresight da curva não foi gerada porque a inteligência "
+                "de mercado não foi carregada nesta execução."
+            )
+        else:
+            movimento_curva, spread_final, leitura_movimento = (
+                infer_curve_reading_from_market_intelligence(market_intelligence)
             )
 
-            if spread_final is not None:
+            if movimento_curva:
                 add_paragraph(
                     document,
-                    f"O spread do último vértice frente à taxa corrente é de "
-                    f"{str(round(float(spread_final), 2)).replace('.', ',')} "
-                    f"ponto percentual."
+                    f"Em relação à Selic atual, a estrutura observada indica "
+                    f"{movimento_curva}.",
+                    bold=True
                 )
 
-            if leitura_movimento:
+                if spread_final is not None:
+                    add_paragraph(
+                        document,
+                        f"O spread do último vértice frente à taxa corrente é de "
+                        f"{str(round(float(spread_final), 2)).replace('.', ',')} "
+                        f"ponto percentual."
+                    )
+
+                if leitura_movimento:
+                    add_paragraph(
+                        document,
+                        leitura_movimento
+                    )
+            else:
                 add_paragraph(
                     document,
-                    leitura_movimento
+                    "Não foi possível classificar a leitura foresight da curva nesta execução."
                 )
 
     # =========================================================
@@ -1008,26 +1113,43 @@ def generate_word_report(
                 cashflow_word_df,
                 font_size=8
             )
+        else:
+            add_section_heading(
+                document,
+                section_number,
+                "Calendário de Movimentações"
+            )
+            section_number += 1
+
+            add_paragraph(
+                document,
+                "Não há movimentações de aporte ou resgate informadas para esta simulação."
+            )
 
     # =========================================================
     # RESUMO MENSAL
     # =========================================================
 
     if report_options.get("resumo_mensal", True):
-        if monthly_df is not None and not monthly_df.empty:
-            add_section_heading(
-                document,
-                section_number,
-                "Apêndice Técnico — Resumo Mensal"
-            )
-            section_number += 1
+        add_section_heading(
+            document,
+            section_number,
+            "Apêndice Técnico — Resumo Mensal"
+        )
+        section_number += 1
 
+        if monthly_df is not None and not monthly_df.empty:
             monthly_word_df = prepare_dataframe_for_word(monthly_df)
 
             add_dataframe_table(
                 document,
                 monthly_word_df,
                 font_size=6
+            )
+        else:
+            add_paragraph(
+                document,
+                "O resumo mensal não está disponível para esta simulação."
             )
 
     # =========================================================

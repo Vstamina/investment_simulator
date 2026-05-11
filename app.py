@@ -885,6 +885,10 @@ if use_market_intelligence:
             with st.spinner("Buscando dados públicos de mercado..."):
                 market_intelligence = generate_market_intelligence()
 
+                st.session_state["market_intelligence"] = market_intelligence
+                
+                market_intelligence = generate_market_intelligence()
+
             bacen_df = market_intelligence.get("bacen_df")
             focus_df = market_intelligence.get("focus_df")
             curve_df = market_intelligence.get("curve_df")
@@ -1281,11 +1285,7 @@ word_file = generate_word_report(
     cashflow_df=report_cashflow_df,
     monthly_df=report_monthly_df,
     consultive_analysis=analysis,
-    market_intelligence=(
-        market_intelligence
-        if "market_intelligence" in locals()
-        else None
-    ),
+    market_intelligence=st.session_state.get("market_intelligence"),
     report_options=report_options,
 )
 
