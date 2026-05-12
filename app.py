@@ -1,5 +1,3 @@
-st.caption("Versão de teste: 2026-05-12 18h30")
-
 from datetime import date
 import streamlit as st
 import pandas as pd
