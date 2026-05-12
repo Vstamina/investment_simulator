@@ -4,6 +4,54 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+
+# =========================================================
+# FORMATADORES
+# =========================================================
+
+def format_currency(value):
+    """
+    Formata número em moeda brasileira.
+    Exemplo:
+    500000 -> R$ 500.000,00
+    """
+    try:
+        value = float(value)
+        return (
+            f"R$ {value:,.2f}"
+            .replace(",", "X")
+            .replace(".", ",")
+            .replace("X", ".")
+        )
+    except Exception:
+        return value
+
+
+def format_percent(value):
+    """
+    Formata percentuais em padrão brasileiro.
+
+    Aceita dois padrões:
+    - 9.80  -> 9,80%
+    - 0.098 -> 9,80%
+
+    Isso evita o erro de exibir 0,10% quando o correto é 9,80%.
+    """
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return value
+
+    if numeric_value == 0:
+        percent_value = 0.0
+    elif abs(numeric_value) < 1:
+        percent_value = numeric_value * 100
+    else:
+        percent_value = numeric_value
+
+    return f"{percent_value:,.2f}%".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 from services.simulation_service import (
     run_cdi_simulation,
     run_cdi_cashflow_simulation,
@@ -1199,6 +1247,25 @@ st.markdown(
 
 # Copia a base calculada para criar a versão formatada da tabela
 display_df = comparison_df.copy()
+
+# =========================================================
+# NORMALIZAÇÃO DAS RENTABILIDADES
+# =========================================================
+# O motor pode devolver rentabilidade em decimal:
+# 0.0978 = 9,78%
+# Este bloco converte para escala percentual apenas quando necessário.
+
+return_columns_to_normalize = [
+    "Rentab. Líq. Período (%)",
+    "Rentab. Líq. Mês (%)",
+    "Rentab. Líq. Ano (%)",
+]
+
+for col in return_columns_to_normalize:
+    if col in display_df.columns:
+        display_df[col] = display_df[col].apply(
+            lambda x: x * 100 if abs(float(x)) <= 1 else x
+        )
 
 # Colunas financeiras que serão exibidas em reais
 currency_columns = [

@@ -1,10 +1,47 @@
+# =========================================================
+# SIMULATION SERVICE
+# =========================================================
+
 import pandas as pd
 
-from calculations.cdi_calculator import simulate_cdi_product, simulate_savings
-from calculations.cashflow_calculator import (
-    simulate_product_with_cashflows,
-    simulate_savings_with_cashflows,
+from calculations.cdi_calculator import (
+    simulate_cdi_product,
+    simulate_savings,
 )
+
+try:
+    from calculations.cashflow_calculator import (
+        simulate_product_with_cashflows,
+        simulate_savings_with_cashflows,
+    )
+except Exception:
+    simulate_product_with_cashflows = None
+    simulate_savings_with_cashflows = None
+
+
+def _build_comparison_row(item: dict) -> dict:
+    """
+    Padroniza as colunas esperadas pelo dashboard.
+    """
+
+    return {
+        "Produto": item.get("Produto"),
+        "% CDI": item.get("% CDI", 0.0),
+        "Taxa Efetiva a.a. (%)": item.get("Taxa Efetiva a.a.", 0.0),
+        "Valor Inicial": item.get("Valor Inicial", 0.0),
+        "Total Aportado": item.get("Total Aportado", item.get("Valor Investido", 0.0)),
+        "Total Resgatado": item.get("Total Resgatado", 0.0),
+        "Valor Bruto": item.get("Valor Bruto", 0.0),
+        "Rendimento Bruto": item.get("Rendimento Bruto", 0.0),
+        "IR": item.get("IR", 0.0),
+        "Alíquota IR (%)": item.get("Alíquota IR", 0.0),
+        "Valor Líquido": item.get("Valor Líquido", 0.0),
+        "Rendimento Líquido": item.get("Rendimento Líquido", 0.0),
+        "Rentab. Líq. Período (%)": item.get("Rentabilidade Líquida no Período (%)", 0.0),
+        "Rentab. Líq. Mês (%)": item.get("Rentabilidade Líquida ao Mês (%)", 0.0),
+        "Rentab. Líq. Ano (%)": item.get("Rentabilidade Líquida ao Ano (%)", 0.0),
+        "Tributável": item.get("Tributável", "Não"),
+    }
 
 
 def run_cdi_simulation(
@@ -23,18 +60,26 @@ def run_cdi_simulation(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Executa a simulação comparativa simples do módulo CDI.
-    Mantida para o modo de aporte mensal fixo.
+
+    Usada para:
+    - Sem aportes adicionais
+    - Aporte mensal fixo
+
+    Motor corrigido para juros compostos.
     """
 
     results = []
 
     results.append(
-        simulate_savings(
+        simulate_cdi_product(
+            product_name="LCI / LCA",
             initial_amount=initial_amount,
             monthly_contribution=monthly_contribution,
             months=months,
-            selic_rate=selic_rate,
-            tr_rate=tr_rate,
+            annual_cdi_rate=annual_cdi_rate,
+            cdi_percentage=lci_lca_percentage,
+            taxable=False,
+            annual_fee=0.0,
         )
     )
 
@@ -47,20 +92,7 @@ def run_cdi_simulation(
             annual_cdi_rate=annual_cdi_rate,
             cdi_percentage=cdb_percentage,
             taxable=True,
-            annual_fee=0,
-        )
-    )
-
-    results.append(
-        simulate_cdi_product(
-            product_name="LCI / LCA",
-            initial_amount=initial_amount,
-            monthly_contribution=monthly_contribution,
-            months=months,
-            annual_cdi_rate=annual_cdi_rate,
-            cdi_percentage=lci_lca_percentage,
-            taxable=False,
-            annual_fee=0,
+            annual_fee=0.0,
         )
     )
 
@@ -90,38 +122,29 @@ def run_cdi_simulation(
         )
     )
 
+    results.append(
+        simulate_savings(
+            initial_amount=initial_amount,
+            monthly_contribution=monthly_contribution,
+            months=months,
+            selic_rate=selic_rate,
+            tr_rate=tr_rate,
+        )
+    )
+
     comparison_rows = []
     evolution_rows = []
 
     for item in results:
-        comparison_rows.append(
-            {
-                "Produto": item["Produto"],
-                "% CDI": item["% CDI"],
-                "Taxa Efetiva a.a. (%)": item["Taxa Efetiva a.a."],
-                "Valor Inicial": initial_amount,
-                "Total Aportado": item["Valor Investido"],
-                "Total Resgatado": 0.0,
-                "Valor Bruto": item["Valor Bruto"],
-                "Rendimento Bruto": item["Rendimento Bruto"],
-                "IR": item["IR"],
-                "Alíquota IR (%)": item["Alíquota IR"],
-                "Valor Líquido": item["Valor Líquido"],
-                "Rendimento Líquido": item["Rendimento Líquido"],
-                "Rentab. Líq. Período (%)": item["Rentabilidade Líquida no Período (%)"],
-                "Rentab. Líq. Mês (%)": item["Rentabilidade Líquida ao Mês (%)"],
-                "Rentab. Líq. Ano (%)": item["Rentabilidade Líquida ao Ano (%)"],
-                "Tributável": item["Tributável"],
-            }
-        )
+        comparison_rows.append(_build_comparison_row(item))
 
-        for row in item["Evolução Mensal"]:
+        for row in item.get("Evolução Mensal", []):
             evolution_rows.append(
                 {
-                    "Data": row["Mês"],
-                    "Mês": row["Mês"],
-                    "Produto": row["Produto"],
-                    "Saldo Bruto": row["Saldo Bruto"],
+                    "Data": row.get("Mês"),
+                    "Mês": row.get("Mês"),
+                    "Produto": row.get("Produto"),
+                    "Saldo Bruto": row.get("Saldo Bruto"),
                 }
             )
 
@@ -130,7 +153,7 @@ def run_cdi_simulation(
 
     comparison_df = comparison_df.sort_values(
         by="Valor Líquido",
-        ascending=False
+        ascending=False,
     ).reset_index(drop=True)
 
     return comparison_df, evolution_df
@@ -153,17 +176,28 @@ def run_cdi_cashflow_simulation(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Executa simulação CDI com calendário de aportes e resgates.
+
+    Mantém compatibilidade com o módulo de cashflow existente.
     """
+
+    if simulate_product_with_cashflows is None or simulate_savings_with_cashflows is None:
+        raise ImportError(
+            "O arquivo calculations/cashflow_calculator.py ainda não está compatível "
+            "com o motor atual. Use primeiro os modos sem aportes ou aporte mensal fixo."
+        )
 
     results = []
 
     results.append(
-        simulate_savings_with_cashflows(
+        simulate_product_with_cashflows(
+            product_name="LCI / LCA",
             initial_amount=initial_amount,
             start_date=start_date,
             end_date=end_date,
-            selic_rate=selic_rate,
-            tr_rate=tr_rate,
+            annual_cdi_rate=annual_cdi_rate,
+            cdi_percentage=lci_lca_percentage,
+            taxable=False,
+            annual_fee=0.0,
             cashflows=cashflows,
         )
     )
@@ -177,20 +211,6 @@ def run_cdi_cashflow_simulation(
             annual_cdi_rate=annual_cdi_rate,
             cdi_percentage=cdb_percentage,
             taxable=True,
-            annual_fee=0.0,
-            cashflows=cashflows,
-        )
-    )
-
-    results.append(
-        simulate_product_with_cashflows(
-            product_name="LCI / LCA",
-            initial_amount=initial_amount,
-            start_date=start_date,
-            end_date=end_date,
-            annual_cdi_rate=annual_cdi_rate,
-            cdi_percentage=lci_lca_percentage,
-            taxable=False,
             annual_fee=0.0,
             cashflows=cashflows,
         )
@@ -224,34 +244,25 @@ def run_cdi_cashflow_simulation(
         )
     )
 
+    results.append(
+        simulate_savings_with_cashflows(
+            initial_amount=initial_amount,
+            start_date=start_date,
+            end_date=end_date,
+            selic_rate=selic_rate,
+            tr_rate=tr_rate,
+            cashflows=cashflows,
+        )
+    )
+
     comparison_rows = []
     daily_rows = []
     monthly_rows = []
 
     for item in results:
-        comparison_rows.append(
-            {
-                "Produto": item["Produto"],
-                "% CDI": item["% CDI"],
-                "Taxa Efetiva a.a. (%)": item["Taxa Efetiva a.a."],
-                "Valor Inicial": item["Valor Inicial"],
-                "Total Aportado": item["Total Aportado"],
-                "Total Resgatado": item["Total Resgatado"],
-                "Valor Bruto": item["Valor Bruto"],
-                "Rendimento Bruto": item["Rendimento Bruto"],
-                "IR": item["IR"],
-                "Alíquota IR (%)": item["Alíquota IR"],
-                "Valor Líquido": item["Valor Líquido"],
-                "Rendimento Líquido": item["Rendimento Líquido"],
-                "Rentab. Líq. Período (%)": item["Rentabilidade Líquida no Período (%)"],
-                "Rentab. Líq. Mês (%)": item["Rentabilidade Líquida ao Mês (%)"],
-                "Rentab. Líq. Ano (%)": item["Rentabilidade Líquida ao Ano (%)"],
-                "Tributável": item["Tributável"],
-            }
-        )
-
-        daily_rows.extend(item["Evolução Diária"])
-        monthly_rows.extend(item["Resumo Mensal"])
+        comparison_rows.append(_build_comparison_row(item))
+        daily_rows.extend(item.get("Evolução Diária", []))
+        monthly_rows.extend(item.get("Resumo Mensal", []))
 
     comparison_df = pd.DataFrame(comparison_rows)
     daily_df = pd.DataFrame(daily_rows)
@@ -259,7 +270,7 @@ def run_cdi_cashflow_simulation(
 
     comparison_df = comparison_df.sort_values(
         by="Valor Líquido",
-        ascending=False
+        ascending=False,
     ).reset_index(drop=True)
 
     return comparison_df, daily_df, monthly_df

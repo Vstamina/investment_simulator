@@ -1,320 +1,404 @@
-from datetime import date
+from datetime import timedelta
+
 import pandas as pd
+from dateutil.relativedelta import relativedelta
 
-from calculations.tax_calculator import calculate_tax, get_ir_rate
-from calculations.cdi_calculator import calculate_savings_monthly_rate
+from calculations.cdi_calculator import (
+    annual_to_business_daily_rate,
+    get_effective_annual_rate,
+    get_savings_monthly_rate,
+    get_savings_annual_rate,
+)
+from calculations.tax_calculator import calculate_tax
+from market_data.business_calendar import (
+    count_business_days,
+    count_calendar_days,
+    get_brazil_national_holidays,
+    is_business_day,
+)
 
 
-def annual_to_daily_rate(annual_rate: float, business_days: int = 252) -> float:
+def normalize_cashflows(cashflows: list[dict]) -> list[dict]:
     """
-    Converte taxa anual percentual em taxa diária decimal.
-    Usa 252 dias úteis como aproximação de mercado.
+    Normaliza calendário de aportes e resgates.
     """
-    return (1 + annual_rate / 100) ** (1 / business_days) - 1
+    normalized = []
+
+    for item in cashflows:
+        cashflow_date = item.get("Data")
+        amount = float(item.get("Valor", 0.0) or 0.0)
+        movement_type = str(item.get("Tipo", "Aporte")).strip()
+
+        if amount <= 0:
+            continue
+
+        if cashflow_date is None:
+            continue
+
+        cashflow_date = pd.to_datetime(cashflow_date).date()
+
+        if movement_type.lower() == "resgate":
+            movement_type = "Resgate"
+        else:
+            movement_type = "Aporte"
+
+        normalized.append(
+            {
+                "Data": cashflow_date,
+                "Valor": amount,
+                "Tipo": movement_type,
+            }
+        )
+
+    return normalized
 
 
-def monthly_to_daily_rate(monthly_rate: float, calendar_days: int = 30) -> float:
+def get_cashflow_amount_for_date(
+    cashflows: list[dict],
+    current_date,
+    movement_type: str
+) -> float:
     """
-    Converte uma taxa mensal decimal em taxa diária decimal.
-    Usada para aproximar o comportamento da poupança em simulações com calendário.
+    Soma aportes ou resgates de uma data específica.
     """
-    return (1 + monthly_rate) ** (1 / calendar_days) - 1
+    total = 0.0
+
+    for item in cashflows:
+        if item["Data"] == current_date and item["Tipo"] == movement_type:
+            total += float(item["Valor"])
+
+    return total
 
 
 def simulate_product_with_cashflows(
     product_name: str,
     initial_amount: float,
-    start_date: date,
-    end_date: date,
+    start_date,
+    end_date,
     annual_cdi_rate: float,
     cdi_percentage: float,
-    taxable: bool = True,
+    taxable: bool,
     annual_fee: float = 0.0,
     cashflows: list[dict] | None = None,
 ) -> dict:
     """
-    Simula um produto CDI considerando aportes e resgates em datas específicas.
-    """
+    Simula produto CDI com calendário de aportes e resgates.
 
+    Motor:
+    - capitalização diária composta;
+    - aplicação do CDI apenas em dias úteis;
+    - base 252 dias úteis;
+    - exclusão de sábados, domingos e feriados nacionais;
+    - IR calculado sobre rendimento bruto ao final, por dias corridos;
+    - rentabilidades retornadas em decimal, não em percentual cheio.
+    """
     if cashflows is None:
         cashflows = []
 
-    if end_date <= start_date:
-        raise ValueError("A data final deve ser posterior à data inicial.")
+    start_date = pd.to_datetime(start_date).date()
+    end_date = pd.to_datetime(end_date).date()
 
-    effective_annual_rate = (annual_cdi_rate * (cdi_percentage / 100)) - annual_fee
+    cashflows = normalize_cashflows(cashflows)
 
-    if effective_annual_rate < 0:
-        effective_annual_rate = 0
+    effective_annual_rate = get_effective_annual_rate(
+        annual_cdi_rate=annual_cdi_rate,
+        cdi_percentage=cdi_percentage,
+        annual_fee=annual_fee,
+    )
 
-    daily_rate = annual_to_daily_rate(effective_annual_rate)
+    daily_rate = annual_to_business_daily_rate(effective_annual_rate)
 
-    balance = initial_amount
-    total_contributions = initial_amount
-    total_withdrawals = 0.0
+    calendar_days = count_calendar_days(start_date, end_date)
+    business_days = count_business_days(start_date, end_date)
 
-    timeline_rows = []
-    all_dates = pd.date_range(start=start_date, end=end_date, freq="D")
+    holiday_set = get_brazil_national_holidays(start_date, end_date)
 
-    cashflow_df = pd.DataFrame(cashflows)
+    balance = float(initial_amount)
+    invested_amount = float(initial_amount)
+    total_contributed = float(initial_amount)
+    total_withdrawn = 0.0
 
-    if not cashflow_df.empty:
-        cashflow_df["data"] = pd.to_datetime(cashflow_df["data"]).dt.date
+    daily_rows = []
 
-    for current_timestamp in all_dates:
-        current_date = current_timestamp.date()
+    current_date = start_date
 
-        day_contribution = 0.0
-        day_withdrawal = 0.0
+    while current_date <= end_date:
+        aportes = get_cashflow_amount_for_date(
+            cashflows=cashflows,
+            current_date=current_date,
+            movement_type="Aporte",
+        )
 
-        if not cashflow_df.empty:
-            day_events = cashflow_df[cashflow_df["data"] == current_date]
+        resgates = get_cashflow_amount_for_date(
+            cashflows=cashflows,
+            current_date=current_date,
+            movement_type="Resgate",
+        )
 
-            for _, event in day_events.iterrows():
-                value = float(event["valor"])
-                event_type = event["tipo"]
+        if aportes > 0:
+            balance += aportes
+            invested_amount += aportes
+            total_contributed += aportes
 
-                if event_type == "Aporte":
-                    balance += value
-                    total_contributions += value
-                    day_contribution += value
+        if resgates > 0:
+            effective_withdrawal = min(resgates, balance)
+            balance -= effective_withdrawal
+            invested_amount = max(invested_amount - effective_withdrawal, 0.0)
+            total_withdrawn += effective_withdrawal
 
-                elif event_type == "Resgate":
-                    withdrawal = min(value, balance)
-                    balance -= withdrawal
-                    total_withdrawals += withdrawal
-                    day_withdrawal += withdrawal
+        rendimento_dia = 0.0
 
-        opening_balance_after_cashflow = balance
+        if current_date > start_date and is_business_day(current_date, holiday_set):
+            previous_balance = balance
+            balance *= (1 + daily_rate)
+            rendimento_dia = balance - previous_balance
 
-        daily_profit = balance * daily_rate
-        balance += daily_profit
-
-        timeline_rows.append(
+        daily_rows.append(
             {
                 "Data": current_date,
                 "Produto": product_name,
-                "Aportes": day_contribution,
-                "Resgates": day_withdrawal,
-                "Rendimento Bruto Diário": daily_profit,
+                "Aportes": aportes,
+                "Resgates": resgates,
+                "Rendimento Bruto no Dia": rendimento_dia,
                 "Saldo Bruto": balance,
-                "Saldo Após Movimentação": opening_balance_after_cashflow,
+                "Dia Útil": "Sim" if is_business_day(current_date, holiday_set) else "Não",
             }
         )
+
+        current_date += timedelta(days=1)
 
     gross_value = balance
-    gross_profit = gross_value + total_withdrawals - total_contributions
+    gross_income = gross_value - invested_amount
 
-    total_days = (end_date - start_date).days
-    tax_value = calculate_tax(gross_profit, total_days, taxable)
+    tax_value, ir_rate = calculate_tax(
+        gross_income=gross_income,
+        days=calendar_days,
+        taxable=taxable,
+    )
 
     net_value = gross_value - tax_value
-    net_profit = net_value + total_withdrawals - total_contributions
+    net_income = net_value - invested_amount
 
-    net_return_period = (
-        (net_profit / total_contributions) * 100
-        if total_contributions > 0
-        else 0
+    # IMPORTANTE:
+    # Daqui para baixo, as rentabilidades ficam em DECIMAL.
+    # Exemplo: 9,94% = 0.0994.
+    # O app.py já transforma em percentual na visualização.
+    period_return = net_income / invested_amount if invested_amount else 0.0
+
+    monthly_return = (
+        (1 + period_return) ** (30 / calendar_days) - 1
+        if calendar_days > 0
+        else 0.0
     )
 
-    total_months = max(total_days / 30, 1)
-
-    net_return_monthly = (
-        ((1 + net_return_period / 100) ** (1 / total_months) - 1) * 100
-        if net_return_period > -100
-        else 0
+    annual_return = (
+        (1 + period_return) ** (365 / calendar_days) - 1
+        if calendar_days > 0
+        else 0.0
     )
 
-    net_return_annual = ((1 + net_return_monthly / 100) ** 12 - 1) * 100
+    daily_df = pd.DataFrame(daily_rows)
 
-    timeline_df = pd.DataFrame(timeline_rows)
+    if not daily_df.empty:
+        daily_df["Mês"] = pd.to_datetime(daily_df["Data"]).dt.to_period("M").astype(str)
 
-    monthly_summary = (
-        timeline_df.assign(Mês=timeline_df["Data"].apply(lambda x: x.strftime("%Y-%m")))
-        .groupby(["Produto", "Mês"], as_index=False)
-        .agg(
-            {
-                "Aportes": "sum",
-                "Resgates": "sum",
-                "Rendimento Bruto Diário": "sum",
-                "Saldo Bruto": "last",
-            }
+        monthly_rows = (
+            daily_df.groupby(["Produto", "Mês"], as_index=False)
+            .agg(
+                {
+                    "Aportes": "sum",
+                    "Resgates": "sum",
+                    "Rendimento Bruto no Dia": "sum",
+                    "Saldo Bruto": "last",
+                }
+            )
+            .rename(
+                columns={
+                    "Rendimento Bruto no Dia": "Rendimento Bruto no Mês",
+                    "Saldo Bruto": "Saldo Bruto Final",
+                }
+            )
+            .to_dict("records")
         )
-        .rename(
-            columns={
-                "Rendimento Bruto Diário": "Rendimento Bruto no Mês",
-                "Saldo Bruto": "Saldo Bruto Final",
-            }
-        )
-    )
+    else:
+        monthly_rows = []
 
     return {
         "Produto": product_name,
         "% CDI": cdi_percentage,
         "Taxa Efetiva a.a.": effective_annual_rate,
+        "Dias Úteis": business_days,
+        "Dias Corridos": calendar_days,
         "Valor Inicial": initial_amount,
-        "Total Aportado": total_contributions,
-        "Total Resgatado": total_withdrawals,
+        "Total Aportado": total_contributed,
+        "Total Resgatado": total_withdrawn,
         "Valor Bruto": gross_value,
-        "Rendimento Bruto": gross_profit,
+        "Rendimento Bruto": gross_income,
         "IR": tax_value,
-        "Alíquota IR": get_ir_rate(total_days) * 100 if taxable else 0,
+        "Alíquota IR": ir_rate,
         "Valor Líquido": net_value,
-        "Rendimento Líquido": net_profit,
-        "Rentabilidade Líquida no Período (%)": net_return_period,
-        "Rentabilidade Líquida ao Mês (%)": net_return_monthly,
-        "Rentabilidade Líquida ao Ano (%)": net_return_annual,
+        "Rendimento Líquido": net_income,
+        "Rentabilidade Líquida no Período (%)": period_return,
+        "Rentabilidade Líquida ao Mês (%)": monthly_return,
+        "Rentabilidade Líquida ao Ano (%)": annual_return,
         "Tributável": "Sim" if taxable else "Não",
-        "Evolução Diária": timeline_rows,
-        "Resumo Mensal": monthly_summary.to_dict("records"),
+        "Evolução Diária": daily_rows,
+        "Resumo Mensal": monthly_rows,
     }
 
 
 def simulate_savings_with_cashflows(
     initial_amount: float,
-    start_date: date,
-    end_date: date,
+    start_date,
+    end_date,
     selic_rate: float,
     tr_rate: float,
     cashflows: list[dict] | None = None,
 ) -> dict:
     """
-    Simulação simplificada da poupança com movimentações por data.
+    Simula poupança com calendário de aportes e resgates.
 
-    Observação:
-    Esta é uma aproximação diária da taxa mensal da poupança.
-    Não trata aniversário individual de cada depósito.
+    Motor:
+    - rendimento por aniversário mensal simplificado;
+    - isenta de IR;
+    - rentabilidades retornadas em decimal, não em percentual cheio.
     """
-
     if cashflows is None:
         cashflows = []
 
-    if end_date <= start_date:
-        raise ValueError("A data final deve ser posterior à data inicial.")
+    start_date = pd.to_datetime(start_date).date()
+    end_date = pd.to_datetime(end_date).date()
 
-    monthly_rate = calculate_savings_monthly_rate(
-        selic_rate=selic_rate,
-        tr_rate=tr_rate,
-    )
+    cashflows = normalize_cashflows(cashflows)
 
-    annual_rate = ((1 + monthly_rate) ** 12 - 1) * 100
-    daily_rate = monthly_to_daily_rate(monthly_rate)
+    monthly_rate = get_savings_monthly_rate(selic_rate, tr_rate)
+    annual_rate = get_savings_annual_rate(selic_rate, tr_rate)
 
-    balance = initial_amount
-    total_contributions = initial_amount
-    total_withdrawals = 0.0
+    calendar_days = count_calendar_days(start_date, end_date)
+    business_days = count_business_days(start_date, end_date)
 
-    timeline_rows = []
-    all_dates = pd.date_range(start=start_date, end=end_date, freq="D")
+    balance = float(initial_amount)
+    invested_amount = float(initial_amount)
+    total_contributed = float(initial_amount)
+    total_withdrawn = 0.0
 
-    cashflow_df = pd.DataFrame(cashflows)
+    daily_rows = []
 
-    if not cashflow_df.empty:
-        cashflow_df["data"] = pd.to_datetime(cashflow_df["data"]).dt.date
+    current_date = start_date
+    next_anniversary = start_date + relativedelta(months=1)
 
-    for current_timestamp in all_dates:
-        current_date = current_timestamp.date()
+    while current_date <= end_date:
+        aportes = get_cashflow_amount_for_date(
+            cashflows=cashflows,
+            current_date=current_date,
+            movement_type="Aporte",
+        )
 
-        day_contribution = 0.0
-        day_withdrawal = 0.0
+        resgates = get_cashflow_amount_for_date(
+            cashflows=cashflows,
+            current_date=current_date,
+            movement_type="Resgate",
+        )
 
-        if not cashflow_df.empty:
-            day_events = cashflow_df[cashflow_df["data"] == current_date]
+        if aportes > 0:
+            balance += aportes
+            invested_amount += aportes
+            total_contributed += aportes
 
-            for _, event in day_events.iterrows():
-                value = float(event["valor"])
-                event_type = event["tipo"]
+        if resgates > 0:
+            effective_withdrawal = min(resgates, balance)
+            balance -= effective_withdrawal
+            invested_amount = max(invested_amount - effective_withdrawal, 0.0)
+            total_withdrawn += effective_withdrawal
 
-                if event_type == "Aporte":
-                    balance += value
-                    total_contributions += value
-                    day_contribution += value
+        rendimento_dia = 0.0
 
-                elif event_type == "Resgate":
-                    withdrawal = min(value, balance)
-                    balance -= withdrawal
-                    total_withdrawals += withdrawal
-                    day_withdrawal += withdrawal
+        if current_date == next_anniversary:
+            previous_balance = balance
+            balance *= (1 + monthly_rate)
+            rendimento_dia = balance - previous_balance
+            next_anniversary = next_anniversary + relativedelta(months=1)
 
-        opening_balance_after_cashflow = balance
-
-        daily_profit = balance * daily_rate
-        balance += daily_profit
-
-        timeline_rows.append(
+        daily_rows.append(
             {
                 "Data": current_date,
                 "Produto": "Poupança",
-                "Aportes": day_contribution,
-                "Resgates": day_withdrawal,
-                "Rendimento Bruto Diário": daily_profit,
+                "Aportes": aportes,
+                "Resgates": resgates,
+                "Rendimento Bruto no Dia": rendimento_dia,
                 "Saldo Bruto": balance,
-                "Saldo Após Movimentação": opening_balance_after_cashflow,
+                "Dia Útil": "-",
             }
         )
+
+        current_date += timedelta(days=1)
 
     gross_value = balance
-    gross_profit = gross_value + total_withdrawals - total_contributions
-
-    total_days = (end_date - start_date).days
+    gross_income = gross_value - invested_amount
 
     net_value = gross_value
-    net_profit = net_value + total_withdrawals - total_contributions
+    net_income = net_value - invested_amount
 
-    net_return_period = (
-        (net_profit / total_contributions) * 100
-        if total_contributions > 0
-        else 0
+    # Rentabilidade em decimal.
+    period_return = net_income / invested_amount if invested_amount else 0.0
+
+    monthly_return = (
+        (1 + period_return) ** (30 / calendar_days) - 1
+        if calendar_days > 0
+        else 0.0
     )
 
-    total_months = max(total_days / 30, 1)
-
-    net_return_monthly = (
-        ((1 + net_return_period / 100) ** (1 / total_months) - 1) * 100
-        if net_return_period > -100
-        else 0
+    annualized_return = (
+        (1 + period_return) ** (365 / calendar_days) - 1
+        if calendar_days > 0
+        else annual_rate
     )
 
-    net_return_annual = ((1 + net_return_monthly / 100) ** 12 - 1) * 100
+    daily_df = pd.DataFrame(daily_rows)
 
-    timeline_df = pd.DataFrame(timeline_rows)
+    if not daily_df.empty:
+        daily_df["Mês"] = pd.to_datetime(daily_df["Data"]).dt.to_period("M").astype(str)
 
-    monthly_summary = (
-        timeline_df.assign(Mês=timeline_df["Data"].apply(lambda x: x.strftime("%Y-%m")))
-        .groupby(["Produto", "Mês"], as_index=False)
-        .agg(
-            {
-                "Aportes": "sum",
-                "Resgates": "sum",
-                "Rendimento Bruto Diário": "sum",
-                "Saldo Bruto": "last",
-            }
+        monthly_rows = (
+            daily_df.groupby(["Produto", "Mês"], as_index=False)
+            .agg(
+                {
+                    "Aportes": "sum",
+                    "Resgates": "sum",
+                    "Rendimento Bruto no Dia": "sum",
+                    "Saldo Bruto": "last",
+                }
+            )
+            .rename(
+                columns={
+                    "Rendimento Bruto no Dia": "Rendimento Bruto no Mês",
+                    "Saldo Bruto": "Saldo Bruto Final",
+                }
+            )
+            .to_dict("records")
         )
-        .rename(
-            columns={
-                "Rendimento Bruto Diário": "Rendimento Bruto no Mês",
-                "Saldo Bruto": "Saldo Bruto Final",
-            }
-        )
-    )
+    else:
+        monthly_rows = []
 
     return {
         "Produto": "Poupança",
-        "% CDI": 0,
+        "% CDI": 0.0,
         "Taxa Efetiva a.a.": annual_rate,
+        "Dias Úteis": business_days,
+        "Dias Corridos": calendar_days,
         "Valor Inicial": initial_amount,
-        "Total Aportado": total_contributions,
-        "Total Resgatado": total_withdrawals,
+        "Total Aportado": total_contributed,
+        "Total Resgatado": total_withdrawn,
         "Valor Bruto": gross_value,
-        "Rendimento Bruto": gross_profit,
-        "IR": 0,
-        "Alíquota IR": 0,
+        "Rendimento Bruto": gross_income,
+        "IR": 0.0,
+        "Alíquota IR": 0.0,
         "Valor Líquido": net_value,
-        "Rendimento Líquido": net_profit,
-        "Rentabilidade Líquida no Período (%)": net_return_period,
-        "Rentabilidade Líquida ao Mês (%)": net_return_monthly,
-        "Rentabilidade Líquida ao Ano (%)": net_return_annual,
+        "Rendimento Líquido": net_income,
+        "Rentabilidade Líquida no Período (%)": period_return,
+        "Rentabilidade Líquida ao Mês (%)": monthly_return,
+        "Rentabilidade Líquida ao Ano (%)": annualized_return,
         "Tributável": "Não",
-        "Evolução Diária": timeline_rows,
-        "Resumo Mensal": monthly_summary.to_dict("records"),
+        "Evolução Diária": daily_rows,
+        "Resumo Mensal": monthly_rows,
     }
