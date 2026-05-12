@@ -444,7 +444,8 @@ apply_come_cotas = st.checkbox(
 
 include_dividend_scenario = st.checkbox(
     "Incluir cenário tributário com dividendos",
-    value=False,
+    value=st.session_state.get("input_include_dividend_scenario", False),
+    key="input_include_dividend_scenario",
     help=(
         "Inclui uma camada complementar para clientes com recebimento "
         "relevante de lucros e dividendos. A simulação é estimativa "
@@ -469,9 +470,10 @@ if include_dividend_scenario:
     monthly_dividends = st.number_input(
         "Dividendos mensais estimados",
         min_value=0.0,
-        value=0.0,
+        value=float(st.session_state.get("input_monthly_dividends", 0.0)),
         step=1000.0,
         format="%.2f",
+        key="input_monthly_dividends",
         help=(
             "Informe o valor mensal estimado de lucros e dividendos "
             "recebidos pelo cliente."
@@ -480,7 +482,8 @@ if include_dividend_scenario:
 
     same_payer_dividends = st.checkbox(
         "Dividendos pagos por uma mesma pessoa jurídica",
-        value=True,
+        value=st.session_state.get("input_same_payer_dividends", True),
+        key="input_same_payer_dividends",
         help=(
             "A camada considera a hipótese de pagamentos concentrados "
             "em uma mesma fonte pagadora."
@@ -491,16 +494,18 @@ if include_dividend_scenario:
         "Quantidade de meses com dividendos no ano",
         min_value=0,
         max_value=12,
-        value=12,
-        step=1
+        value=int(st.session_state.get("input_months_with_dividends", 12)),
+        step=1,
+        key="input_months_with_dividends"
     )
 
     annual_total_income = st.number_input(
         "Renda anual total estimada do cliente",
         min_value=0.0,
-        value=0.0,
+        value=float(st.session_state.get("input_annual_total_income", 0.0)),
         step=10000.0,
         format="%.2f",
+        key="input_annual_total_income",
         help=(
             "Informe a renda anual total estimada do cliente para simular "
             "a tributação mínima. Esse valor deve considerar a vida fiscal "
@@ -1843,8 +1848,6 @@ report_options = {
     "leitura_foresight": incluir_leitura_foresight,
     "aviso_tecnico": incluir_aviso_tecnico,
 }
-
-st.write("DEBUG RELATÓRIO - integrated_tax_scenario:", integrated_tax_scenario)
 
 word_file = generate_word_report(
     client_name=client_name,
