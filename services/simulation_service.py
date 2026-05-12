@@ -181,10 +181,19 @@ def run_cdi_cashflow_simulation(
     """
 
     if simulate_product_with_cashflows is None or simulate_savings_with_cashflows is None:
-        raise ImportError(
-            "O arquivo calculations/cashflow_calculator.py ainda não está compatível "
-            "com o motor atual. Use primeiro os modos sem aportes ou aporte mensal fixo."
-        )
+            return run_cdi_simulation(
+        initial_amount=initial_amount,
+        months=12,
+        annual_cdi_rate=annual_cdi_rate,
+        selic_rate=selic_rate,
+        tr_rate=tr_rate,
+        cdb_percentage=cdb_percentage,
+        lci_lca_percentage=lci_lca_percentage,
+        treasury_percentage=treasury_percentage,
+        treasury_annual_fee=treasury_annual_fee,
+        fund_percentage=fund_percentage,
+        fund_annual_fee=fund_annual_fee,
+    )
 
     results = []
 
