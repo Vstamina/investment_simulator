@@ -715,25 +715,68 @@ if end_date <= start_date:
 # EXECUÇÃO DA SIMULAÇÃO
 # =========================================================
 
-if simulation_mode == "Aportes e resgates por calendário":
-    comparison_df, daily_df, monthly_df = run_cdi_cashflow_simulation(
-        initial_amount=initial_amount,
-        start_date=start_date,
-        end_date=end_date,
-        annual_cdi_rate=annual_cdi_rate,
-        selic_rate=selic_rate,
-        tr_rate=tr_rate,
-        cdb_percentage=cdb_percentage,
-        lci_lca_percentage=lci_lca_percentage,
-        treasury_percentage=treasury_percentage,
-        fund_percentage=fund_percentage,
-        fund_annual_fee=fund_annual_fee,
-        treasury_annual_fee=treasury_annual_fee,
-        cashflows=cashflows,
-    )
+daily_df = pd.DataFrame()
+monthly_df = pd.DataFrame()
+evolution_df = pd.DataFrame()
+evolution_x = "Mês"
 
-    evolution_df = daily_df.copy()
-    evolution_x = "Data"
+if simulation_mode == "Aportes e resgates por calendário":
+
+    try:
+        comparison_df, daily_df, monthly_df = run_cdi_cashflow_simulation(
+            initial_amount=initial_amount,
+            start_date=start_date,
+            end_date=end_date,
+            annual_cdi_rate=annual_cdi_rate,
+            selic_rate=selic_rate,
+            tr_rate=tr_rate,
+            cdb_percentage=cdb_percentage,
+            lci_lca_percentage=lci_lca_percentage,
+            treasury_percentage=treasury_percentage,
+            fund_percentage=fund_percentage,
+            fund_annual_fee=fund_annual_fee,
+            treasury_annual_fee=treasury_annual_fee,
+            cashflows=cashflows,
+        )
+
+        evolution_df = daily_df.copy()
+        evolution_x = "Data"
+
+    except Exception as error:
+        st.warning(
+            "O modo de aportes e resgates por calendário ainda está em ajuste. "
+            "Para manter o simulador aberto, esta execução usará temporariamente "
+            "a simulação padrão pelo período informado, sem aplicar os movimentos "
+            "do calendário ao cálculo."
+        )
+
+        start = pd.to_datetime(start_date)
+        end = pd.to_datetime(end_date)
+
+        days_between_dates = max((end - start).days, 1)
+        fallback_months = max(round(days_between_dates / 30), 1)
+
+        comparison_df, evolution_df = run_cdi_simulation(
+            initial_amount=initial_amount,
+            monthly_contribution=0.0,
+            months=int(fallback_months),
+            annual_cdi_rate=annual_cdi_rate,
+            selic_rate=selic_rate,
+            tr_rate=tr_rate,
+            cdb_percentage=cdb_percentage,
+            lci_lca_percentage=lci_lca_percentage,
+            treasury_percentage=treasury_percentage,
+            fund_percentage=fund_percentage,
+            fund_annual_fee=fund_annual_fee,
+            treasury_annual_fee=treasury_annual_fee,
+        )
+
+        daily_df = evolution_df.copy()
+        monthly_df = pd.DataFrame()
+        evolution_x = "Mês"
+
+        with st.expander("Detalhes técnicos do fallback"):
+            st.exception(error)
 
 else:
     if simulation_mode == "Sem aportes adicionais":
@@ -757,6 +800,7 @@ else:
     daily_df = pd.DataFrame()
     monthly_df = pd.DataFrame()
     evolution_x = "Mês"
+    
 
 # =========================================================
 # AJUSTE DO FUNDO DI COM COME-COTAS
