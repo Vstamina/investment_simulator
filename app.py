@@ -627,7 +627,6 @@ if include_dividend_scenario:
 # =========================================================
 
 cashflows = []
-cashflow_editor_df = pd.DataFrame()
 
 if simulation_mode == "Aportes e resgates por calendário":
     st.markdown(
@@ -635,50 +634,51 @@ if simulation_mode == "Aportes e resgates por calendário":
         unsafe_allow_html=True
     )
 
-    st.markdown(
-        """
-        <div class="info-box">
-            Informe aportes e resgates programados. O sistema recalcula a projeção considerando as datas escolhidas.
-        </div>
-        """,
-        unsafe_allow_html=True
+    st.info(
+        "Informe aportes e resgates programados. Para resgates, selecione de qual produto o valor será retirado."
     )
 
-    default_cashflows = pd.DataFrame(
+    default_cashflow_df = pd.DataFrame(
         [
             {
-                "Data": date(2026, 3, 15),
+                "Data": start_date,
+                "Produto": "Todos os produtos",
                 "Tipo": "Aporte",
-                "Valor": 80000.0,
+                "Valor": 0.0,
                 "Descrição": "Aporte programado",
-            },
-            {
-                "Data": date(2026, 6, 10),
-                "Tipo": "Aporte",
-                "Valor": 120000.0,
-                "Descrição": "Entrada prevista",
-            },
-            {
-                "Data": date(2026, 9, 20),
-                "Tipo": "Resgate",
-                "Valor": 50000.0,
-                "Descrição": "Necessidade de liquidez",
-            },
+            }
         ]
     )
 
-    cashflow_editor_df = st.data_editor(
-        default_cashflows,
+    cashflow_df = st.data_editor(
+        default_cashflow_df,
         num_rows="dynamic",
         use_container_width=True,
+        hide_index=True,
         column_config={
             "Data": st.column_config.DateColumn(
                 "Data",
                 format="DD/MM/YYYY",
+                required=True,
+            ),
+            "Produto": st.column_config.SelectboxColumn(
+                "Produto",
+                options=[
+                    "Todos os produtos",
+                    "LCI / LCA",
+                    "CDB / LC",
+                    "Tesouro Selic",
+                    "Fundo DI",
+                    "Poupança",
+                ],
+                required=True,
             ),
             "Tipo": st.column_config.SelectboxColumn(
                 "Tipo",
-                options=["Aporte", "Resgate"],
+                options=[
+                    "Aporte",
+                    "Resgate",
+                ],
                 required=True,
             ),
             "Valor": st.column_config.NumberColumn(
@@ -686,14 +686,20 @@ if simulation_mode == "Aportes e resgates por calendário":
                 min_value=0.0,
                 step=1000.0,
                 format="R$ %.2f",
+                required=True,
             ),
             "Descrição": st.column_config.TextColumn(
                 "Descrição"
             ),
         },
+        key="cashflow_editor",
     )
 
-    cashflows = build_cashflows_from_editor(cashflow_editor_df)
+    valid_cashflow_df = cashflow_df[
+        cashflow_df["Valor"].fillna(0) > 0
+    ].copy()
+
+    cashflows = valid_cashflow_df.to_dict("records")
 
 
 # =========================================================
@@ -1839,7 +1845,7 @@ st.markdown(
 )
 
 if simulation_mode == "Aportes e resgates por calendário":
-    report_cashflow_df = cashflow_editor_df.copy()
+    report_cashflow_df = cashflow_df.copy()
     report_monthly_df = monthly_df.copy()
 else:
     report_cashflow_df = pd.DataFrame()
