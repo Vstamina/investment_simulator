@@ -620,6 +620,14 @@ def generate_word_report(
     consultive_analysis=None,
     market_intelligence=None,
     report_options=None,
+    include_dividend_scenario=False,
+    monthly_dividends=0.0,
+    same_payer_dividends=True,
+    months_with_dividends=0,
+    taxable_monthly_dividends=0.0,
+    estimated_monthly_dividend_ir=0.0,
+    integrated_tax_scenario=None,
+    estimated_annual_dividend_ir=0.0,
 ):
     if report_options is None:
         report_options = {
@@ -989,6 +997,141 @@ def generate_word_report(
                 font_size=6
             )
 
+            # =========================================================
+            # CENÁRIO ANUAL: DIVIDENDOS E TRIBUTAÇÃO MÍNIMA
+            # =========================================================
+
+            if integrated_tax_scenario and integrated_tax_scenario.get(
+                "include_dividend_scenario"
+            ):
+                add_subheading(
+                    document,
+                    "Cenário Anual: Dividendos, Tributação Mínima e Alocação"
+                )
+
+                monthly_dividends = integrated_tax_scenario.get(
+                    "monthly_dividends",
+                    0.0
+                )
+                months_with_dividends = integrated_tax_scenario.get(
+                    "months_with_dividends",
+                    0
+                )
+                taxable_monthly_dividends = integrated_tax_scenario.get(
+                    "taxable_monthly_dividends",
+                    0.0
+                )
+                estimated_monthly_dividend_ir = integrated_tax_scenario.get(
+                    "estimated_monthly_dividend_ir",
+                    0.0
+                )
+                estimated_annual_dividend_ir = integrated_tax_scenario.get(
+                    "estimated_annual_dividend_ir",
+                    0.0
+                )
+                annual_total_income = integrated_tax_scenario.get(
+                    "annual_total_income",
+                    0.0
+                )
+                minimum_tax_rate = integrated_tax_scenario.get(
+                    "minimum_tax_rate",
+                    0.0
+                )
+                minimum_tax_due = integrated_tax_scenario.get(
+                    "minimum_tax_due",
+                    0.0
+                )
+                isolated_winner_product = integrated_tax_scenario.get(
+                    "isolated_winner_product",
+                    ""
+                )
+                isolated_winner_net_value = integrated_tax_scenario.get(
+                    "isolated_winner_net_value",
+                    0.0
+                )
+                adjusted_winner_product = integrated_tax_scenario.get(
+                    "adjusted_winner_product",
+                    ""
+                )
+                adjusted_winner_value = integrated_tax_scenario.get(
+                    "adjusted_winner_value",
+                    0.0
+                )
+                net_difference_lci_vs_cdb = integrated_tax_scenario.get(
+                    "net_difference_lci_vs_cdb",
+                    0.0
+                )
+                fiscal_effect_cdb_vs_lci = integrated_tax_scenario.get(
+                    "fiscal_effect_cdb_vs_lci",
+                    0.0
+                )
+
+                document.add_paragraph(
+                    "Esta seção apresenta uma leitura complementar da decisão "
+                    "de alocação quando o cliente possui recebimento relevante "
+                    "de lucros e dividendos. A análise não considera compensação "
+                    "automática mensal entre produtos financeiros e dividendos. "
+                    "O objetivo é comparar o resultado líquido isolado dos "
+                    "produtos com uma visão anual da tributação mínima estimada."
+                )
+
+                document.add_paragraph(
+                    f"Nesta simulação, o cliente informou dividendos mensais "
+                    f"estimados de R$ {monthly_dividends:,.2f}, durante "
+                    f"{months_with_dividends} mês(es) no ano. A base mensal "
+                    f"considerada para retenção foi de "
+                    f"R$ {taxable_monthly_dividends:,.2f}. O IRRF mensal "
+                    f"estimado sobre dividendos foi de "
+                    f"R$ {estimated_monthly_dividend_ir:,.2f}, resultando em "
+                    f"IRRF anual estimado de "
+                    f"R$ {estimated_annual_dividend_ir:,.2f}."
+                )
+
+                document.add_paragraph(
+                    f"A renda anual total estimada informada foi de "
+                    f"R$ {annual_total_income:,.2f}. Com base nesse valor, "
+                    f"a alíquota mínima estimada foi de "
+                    f"{minimum_tax_rate * 100:.2f}%, gerando IR mínimo anual "
+                    f"estimado de R$ {minimum_tax_due:,.2f}."
+                )
+
+                document.add_paragraph(
+                    f"No resultado líquido isolado da aplicação, o produto "
+                    f"com melhor desempenho foi {isolated_winner_product}, "
+                    f"com valor líquido estimado de "
+                    f"R$ {isolated_winner_net_value:,.2f}."
+                )
+
+                document.add_paragraph(
+                    f"Na leitura fiscal anual, o produto com melhor valor "
+                    f"comparável no cenário foi {adjusted_winner_product}, "
+                    f"com valor estimado de R$ {adjusted_winner_value:,.2f}. "
+                    f"Essa métrica considera o efeito fiscal potencial dos "
+                    f"produtos tributados frente à LCI/LCA, sem tratar esse "
+                    f"valor como saldo financeiro automático."
+                )
+
+                document.add_paragraph(
+                    f"A diferença líquida da LCI/LCA em relação ao CDB/LC "
+                    f"foi de R$ {net_difference_lci_vs_cdb:,.2f}. O efeito "
+                    f"fiscal potencial do CDB/LC frente à LCI/LCA foi estimado "
+                    f"em R$ {fiscal_effect_cdb_vs_lci:,.2f}. Quando esse "
+                    f"efeito fiscal potencial supera a diferença líquida entre "
+                    f"os produtos, o CDB/LC merece análise consultiva mais "
+                    f"aprofundada no cenário anual."
+                )
+
+                document.add_paragraph(
+                    "A leitura final deve separar dois planos de decisão. No "
+                    "plano da aplicação isolada, prevalece o produto com maior "
+                    "valor líquido projetado. No plano fiscal anual, produtos "
+                    "tributados podem ganhar relevância quando o imposto retido "
+                    "no produto reduz eventual saldo adicional de tributação "
+                    "mínima. A aplicação prática depende da situação fiscal "
+                    "completa do cliente e deve ser validada por contador ou "
+                    "especialista tributário."
+                )
+
         add_subheading(
             document,
             "Detalhamento Tributário do Fundo DI"
@@ -1034,6 +1177,349 @@ def generate_word_report(
             "e eventual complemento tributário no resgate."
         )
             
+
+    # =========================================================
+    # CENÁRIO ANUAL: DIVIDENDOS, TRIBUTAÇÃO MÍNIMA E ALOCAÇÃO
+    # =========================================================
+
+    if integrated_tax_scenario and integrated_tax_scenario.get(
+        "include_dividend_scenario"
+    ):
+        add_subheading(
+            document,
+            "Cenário Anual: Dividendos, Tributação Mínima e Alocação"
+        )
+
+        monthly_dividends = integrated_tax_scenario.get(
+            "monthly_dividends",
+            0.0
+        )
+        months_with_dividends = integrated_tax_scenario.get(
+            "months_with_dividends",
+            0
+        )
+        taxable_monthly_dividends = integrated_tax_scenario.get(
+            "taxable_monthly_dividends",
+            0.0
+        )
+        estimated_monthly_dividend_ir = integrated_tax_scenario.get(
+            "estimated_monthly_dividend_ir",
+            0.0
+        )
+        estimated_annual_dividend_ir = integrated_tax_scenario.get(
+            "estimated_annual_dividend_ir",
+            0.0
+        )
+        annual_total_income = integrated_tax_scenario.get(
+            "annual_total_income",
+            0.0
+        )
+        minimum_tax_rate = integrated_tax_scenario.get(
+            "minimum_tax_rate",
+            0.0
+        )
+        minimum_tax_due = integrated_tax_scenario.get(
+            "minimum_tax_due",
+            0.0
+        )
+        isolated_winner_product = integrated_tax_scenario.get(
+            "isolated_winner_product",
+            ""
+        )
+        isolated_winner_net_value = integrated_tax_scenario.get(
+            "isolated_winner_net_value",
+            0.0
+        )
+        adjusted_winner_product = integrated_tax_scenario.get(
+            "adjusted_winner_product",
+            ""
+        )
+        adjusted_winner_value = integrated_tax_scenario.get(
+            "adjusted_winner_value",
+            0.0
+        )
+        net_difference_lci_vs_cdb = integrated_tax_scenario.get(
+            "net_difference_lci_vs_cdb",
+            0.0
+        )
+        fiscal_effect_cdb_vs_lci = integrated_tax_scenario.get(
+            "fiscal_effect_cdb_vs_lci",
+            0.0
+        )
+
+        annual_tax_scenario_records = integrated_tax_scenario.get(
+            "annual_tax_scenario_records",
+            []
+        )
+
+        document.add_paragraph(
+            "Esta seção compara a decisão de alocação em dois planos: o "
+            "resultado líquido isolado dos produtos e a leitura fiscal anual "
+            "associada à tributação mínima. A análise não considera compensação "
+            "automática mensal entre produtos financeiros e dividendos. O objetivo "
+            "é avaliar se impostos já pagos ou retidos podem reduzir eventual "
+            "saldo adicional de tributação mínima, quando aplicável ao caso "
+            "concreto."
+        )
+
+        document.add_paragraph(
+            f"Nesta simulação, o cliente informou dividendos mensais estimados "
+            f"de R$ {monthly_dividends:,.2f}, durante {months_with_dividends} "
+            f"mês(es) no ano. A base mensal considerada para retenção foi de "
+            f"R$ {taxable_monthly_dividends:,.2f}. O IRRF mensal estimado sobre "
+            f"dividendos foi de R$ {estimated_monthly_dividend_ir:,.2f}, "
+            f"resultando em IRRF anual estimado de "
+            f"R$ {estimated_annual_dividend_ir:,.2f}."
+        )
+
+        document.add_paragraph(
+            f"A renda anual total estimada informada foi de "
+            f"R$ {annual_total_income:,.2f}. Com base nesse valor, a alíquota "
+            f"mínima estimada foi de {minimum_tax_rate * 100:.2f}%, gerando "
+            f"IR mínimo anual estimado de R$ {minimum_tax_due:,.2f}."
+        )
+
+        if annual_tax_scenario_records:
+            annual_tax_word_df = pd.DataFrame(annual_tax_scenario_records)
+
+            columns_to_show = [
+                "Produto",
+                "Valor líquido da aplicação",
+                "Rentab. líquida isolada (%)",
+                "IR do produto",
+                "IRRF dividendos",
+                "Saldo adicional estimado",
+                "Efeito fiscal potencial vs LCI/LCA",
+                "Valor comparável no cenário",
+                "Rentab. comparável no cenário (%)",
+            ]
+
+            annual_tax_word_df = select_existing_columns(
+                annual_tax_word_df,
+                columns_to_show
+            )
+
+            annual_tax_word_df = prepare_dataframe_for_word(
+                annual_tax_word_df
+            )
+
+            add_dataframe_table(
+                document,
+                annual_tax_word_df,
+                font_size=6
+            )
+
+        document.add_paragraph(
+            f"No resultado líquido isolado da aplicação, o produto com melhor "
+            f"desempenho foi {isolated_winner_product}, com valor líquido "
+            f"estimado de R$ {isolated_winner_net_value:,.2f}. Essa leitura "
+            f"mostra o produto vencedor quando se considera apenas o resultado "
+            f"da aplicação, depois de custos e impostos próprios."
+        )
+
+        document.add_paragraph(
+            f"Na leitura fiscal anual, o produto com maior valor comparável "
+            f"no cenário foi {adjusted_winner_product}, com valor estimado de "
+            f"R$ {adjusted_winner_value:,.2f}. Essa métrica não representa saldo "
+            f"financeiro automático. Ela compara o valor líquido da aplicação "
+            f"com o efeito fiscal potencial dos produtos tributados em relação "
+            f"à LCI/LCA."
+        )
+
+        document.add_paragraph(
+            f"A diferença líquida da LCI/LCA em relação ao CDB/LC foi de "
+            f"R$ {net_difference_lci_vs_cdb:,.2f}. O efeito fiscal potencial "
+            f"do CDB/LC frente à LCI/LCA foi estimado em "
+            f"R$ {fiscal_effect_cdb_vs_lci:,.2f}. Quando esse efeito fiscal "
+            f"potencial supera a diferença líquida entre os produtos, o CDB/LC "
+            f"merece análise prioritária no cenário fiscal anual."
+        )
+
+        document.add_paragraph(
+            "A decisão final deve separar a eficiência da aplicação isolada "
+            "da eficiência fiscal anual. LCI e LCA podem continuar superiores "
+            "quando a prioridade é rentabilidade líquida isenta. Produtos "
+            "tributados, como CDB/LC, Tesouro Selic e Fundo DI, podem ganhar "
+            "relevância quando o imposto retido no produto reduz eventual saldo "
+            "adicional de tributação mínima. A aplicação prática depende da "
+            "situação fiscal completa do cliente e deve ser validada por "
+            "contador ou especialista tributário."
+        )
+
+
+    # =========================================================
+    # CENÁRIO ANUAL: DIVIDENDOS, TRIBUTAÇÃO MÍNIMA E ALOCAÇÃO
+    # =========================================================
+
+    if integrated_tax_scenario and integrated_tax_scenario.get(
+        "include_dividend_scenario"
+    ):
+        add_section_heading(
+            document,
+            section_number,
+            "Cenário Anual: Dividendos, Tributação Mínima e Alocação"
+        )
+        section_number += 1
+
+        monthly_dividends = integrated_tax_scenario.get(
+            "monthly_dividends",
+            0.0
+        )
+        months_with_dividends = integrated_tax_scenario.get(
+            "months_with_dividends",
+            0
+        )
+        taxable_monthly_dividends = integrated_tax_scenario.get(
+            "taxable_monthly_dividends",
+            0.0
+        )
+        estimated_monthly_dividend_ir = integrated_tax_scenario.get(
+            "estimated_monthly_dividend_ir",
+            0.0
+        )
+        estimated_annual_dividend_ir = integrated_tax_scenario.get(
+            "estimated_annual_dividend_ir",
+            0.0
+        )
+        annual_total_income = integrated_tax_scenario.get(
+            "annual_total_income",
+            0.0
+        )
+        minimum_tax_rate = integrated_tax_scenario.get(
+            "minimum_tax_rate",
+            0.0
+        )
+        minimum_tax_due = integrated_tax_scenario.get(
+            "minimum_tax_due",
+            0.0
+        )
+        isolated_winner_product = integrated_tax_scenario.get(
+            "isolated_winner_product",
+            ""
+        )
+        isolated_winner_net_value = integrated_tax_scenario.get(
+            "isolated_winner_net_value",
+            0.0
+        )
+        adjusted_winner_product = integrated_tax_scenario.get(
+            "adjusted_winner_product",
+            ""
+        )
+        adjusted_winner_value = integrated_tax_scenario.get(
+            "adjusted_winner_value",
+            0.0
+        )
+        net_difference_lci_vs_cdb = integrated_tax_scenario.get(
+            "net_difference_lci_vs_cdb",
+            0.0
+        )
+        fiscal_effect_cdb_vs_lci = integrated_tax_scenario.get(
+            "fiscal_effect_cdb_vs_lci",
+            0.0
+        )
+        annual_tax_scenario_records = integrated_tax_scenario.get(
+            "annual_tax_scenario_records",
+            []
+        )
+
+        add_paragraph(
+            document,
+            "Esta seção compara a decisão de alocação em dois planos: o "
+            "resultado líquido isolado dos produtos e a leitura fiscal anual "
+            "associada à tributação mínima. A análise não considera compensação "
+            "automática mensal entre produtos financeiros e dividendos. O objetivo "
+            "é avaliar se impostos já pagos ou retidos podem reduzir eventual "
+            "saldo adicional de tributação mínima, quando aplicável ao caso concreto."
+        )
+
+        add_paragraph(
+            document,
+            f"Nesta simulação, o cliente informou dividendos mensais estimados "
+            f"de R$ {monthly_dividends:,.2f}, durante {months_with_dividends} "
+            f"mês(es) no ano. A base mensal considerada para retenção foi de "
+            f"R$ {taxable_monthly_dividends:,.2f}. O IRRF mensal estimado sobre "
+            f"dividendos foi de R$ {estimated_monthly_dividend_ir:,.2f}, "
+            f"resultando em IRRF anual estimado de "
+            f"R$ {estimated_annual_dividend_ir:,.2f}."
+        )
+
+        add_paragraph(
+            document,
+            f"A renda anual total estimada informada foi de "
+            f"R$ {annual_total_income:,.2f}. Com base nesse valor, a alíquota "
+            f"mínima estimada foi de {minimum_tax_rate * 100:.2f}%, gerando "
+            f"IR mínimo anual estimado de R$ {minimum_tax_due:,.2f}."
+        )
+
+        if annual_tax_scenario_records:
+            annual_tax_word_df = pd.DataFrame(annual_tax_scenario_records)
+
+            columns_to_show = [
+                "Produto",
+                "Valor líquido da aplicação",
+                "Rentab. líquida isolada (%)",
+                "IR do produto",
+                "IRRF dividendos",
+                "Saldo adicional estimado",
+                "Efeito fiscal potencial vs LCI/LCA",
+                "Valor comparável no cenário",
+                "Rentab. comparável no cenário (%)",
+            ]
+
+            annual_tax_word_df = select_existing_columns(
+                annual_tax_word_df,
+                columns_to_show
+            )
+
+            annual_tax_word_df = prepare_dataframe_for_word(
+                annual_tax_word_df
+            )
+
+            add_dataframe_table(
+                document,
+                annual_tax_word_df,
+                font_size=6
+            )
+
+        add_paragraph(
+            document,
+            f"No resultado líquido isolado da aplicação, o produto com melhor "
+            f"desempenho foi {isolated_winner_product}, com valor líquido "
+            f"estimado de R$ {isolated_winner_net_value:,.2f}."
+        )
+
+        add_paragraph(
+            document,
+            f"Na leitura fiscal anual, o produto com maior valor comparável "
+            f"no cenário foi {adjusted_winner_product}, com valor estimado de "
+            f"R$ {adjusted_winner_value:,.2f}. Essa métrica não representa saldo "
+            f"financeiro automático. Ela compara o valor líquido da aplicação "
+            f"com o efeito fiscal potencial dos produtos tributados em relação "
+            f"à LCI/LCA."
+        )
+
+        add_paragraph(
+            document,
+            f"A diferença líquida da LCI/LCA em relação ao CDB/LC foi de "
+            f"R$ {net_difference_lci_vs_cdb:,.2f}. O efeito fiscal potencial "
+            f"do CDB/LC frente à LCI/LCA foi estimado em "
+            f"R$ {fiscal_effect_cdb_vs_lci:,.2f}. Quando esse efeito fiscal "
+            f"potencial supera a diferença líquida entre os produtos, o CDB/LC "
+            f"merece análise consultiva mais aprofundada no cenário anual."
+        )
+
+        add_paragraph(
+            document,
+            "A decisão final deve separar a eficiência da aplicação isolada "
+            "da eficiência fiscal anual. LCI e LCA podem continuar superiores "
+            "quando a prioridade é rentabilidade líquida isenta. Produtos "
+            "tributados, como CDB/LC, Tesouro Selic e Fundo DI, podem ganhar "
+            "relevância quando o imposto retido no produto reduz eventual saldo "
+            "adicional de tributação mínima. A aplicação prática depende da "
+            "situação fiscal completa do cliente e deve ser validada por "
+            "contador ou especialista tributário."
+        )
+
 
     # =========================================================
     # INTELIGÊNCIA DE MERCADO E FORESIGHT

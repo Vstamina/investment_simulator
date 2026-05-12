@@ -437,6 +437,138 @@ apply_come_cotas = st.checkbox(
     )
 )
 
+
+# =========================================================
+# CENÁRIO TRIBUTÁRIO COMPLEMENTAR: DIVIDENDOS
+# =========================================================
+
+include_dividend_scenario = st.checkbox(
+    "Incluir cenário tributário com dividendos",
+    value=False,
+    help=(
+        "Inclui uma camada complementar para clientes com recebimento "
+        "relevante de lucros e dividendos. A simulação é estimativa "
+        "e não substitui avaliação contábil ou fiscal."
+    )
+)
+
+monthly_dividends = 0.0
+same_payer_dividends = True
+months_with_dividends = 12
+taxable_monthly_dividends = 0.0
+estimated_monthly_dividend_ir = 0.0
+estimated_annual_dividend_ir = 0.0
+annual_total_income = 0.0
+minimum_tax_rate = 0.0
+minimum_tax_due = 0.0
+integrated_tax_scenario = {}
+
+if include_dividend_scenario:
+    st.markdown("#### Cenário tributário com dividendos")
+
+    monthly_dividends = st.number_input(
+        "Dividendos mensais estimados",
+        min_value=0.0,
+        value=0.0,
+        step=1000.0,
+        format="%.2f",
+        help=(
+            "Informe o valor mensal estimado de lucros e dividendos "
+            "recebidos pelo cliente."
+        )
+    )
+
+    same_payer_dividends = st.checkbox(
+        "Dividendos pagos por uma mesma pessoa jurídica",
+        value=True,
+        help=(
+            "A camada considera a hipótese de pagamentos concentrados "
+            "em uma mesma fonte pagadora."
+        )
+    )
+
+    months_with_dividends = st.number_input(
+        "Quantidade de meses com dividendos no ano",
+        min_value=0,
+        max_value=12,
+        value=12,
+        step=1
+    )
+
+    annual_total_income = st.number_input(
+        "Renda anual total estimada do cliente",
+        min_value=0.0,
+        value=0.0,
+        step=10000.0,
+        format="%.2f",
+        help=(
+            "Informe a renda anual total estimada do cliente para simular "
+            "a tributação mínima. Esse valor deve considerar a vida fiscal "
+            "anual do cliente, conforme orientação contábil."
+        )
+    )
+
+    DIVIDEND_MONTHLY_REFERENCE_LIMIT = 50000.0
+    DIVIDEND_IR_RATE = 0.10
+
+    if same_payer_dividends:
+        if monthly_dividends > DIVIDEND_MONTHLY_REFERENCE_LIMIT:
+            taxable_monthly_dividends = monthly_dividends
+        else:
+            taxable_monthly_dividends = 0.0
+
+        estimated_monthly_dividend_ir = (
+            taxable_monthly_dividends * DIVIDEND_IR_RATE
+        )
+
+        estimated_annual_dividend_ir = (
+            estimated_monthly_dividend_ir * months_with_dividends
+        )
+    else:
+        taxable_monthly_dividends = 0.0
+        estimated_monthly_dividend_ir = 0.0
+        estimated_annual_dividend_ir = 0.0
+
+    if annual_total_income <= 600000:
+        minimum_tax_rate = 0.0
+    elif annual_total_income < 1200000:
+        minimum_tax_rate = (
+            (annual_total_income - 600000) / 600000
+        ) * 0.10
+    else:
+        minimum_tax_rate = 0.10
+
+    minimum_tax_due = annual_total_income * minimum_tax_rate
+
+    st.info(
+        "Esta é uma simulação complementar e simplificada. Ela não altera "
+        "automaticamente a rentabilidade dos produtos, mas ajuda a contextualizar "
+        "a decisão dentro da situação tributária global do cliente."
+    )
+
+    col_div_1, col_div_2, col_div_3, col_div_4 = st.columns(4)
+
+    col_div_1.metric(
+        "Base mensal dividendos",
+        format_currency(taxable_monthly_dividends)
+    )
+
+    col_div_2.metric(
+        "IRRF anual dividendos",
+        format_currency(estimated_annual_dividend_ir)
+    )
+
+    col_div_3.metric(
+        "Alíquota mínima estimada",
+        f"{minimum_tax_rate * 100:.2f}%"
+    )
+
+    col_div_4.metric(
+        "IR mínimo anual estimado",
+        format_currency(minimum_tax_due)
+    )
+
+
 # =========================================================
 # CALENDÁRIO DE MOVIMENTAÇÕES
 # =========================================================
@@ -567,7 +699,7 @@ else:
     monthly_df = pd.DataFrame()
     evolution_x = "Mês"
 
-    # =========================================================
+# =========================================================
 # AJUSTE DO FUNDO DI COM COME-COTAS
 # =========================================================
 
@@ -664,6 +796,318 @@ if not comparison_df.empty and "Produto" in comparison_df.columns:
                 fund_mask,
                 "Taxa de Administração"
             ] = fund_result.admin_fee_impact
+
+
+# =========================================================
+# CENÁRIO ANUAL: TRIBUTAÇÃO MÍNIMA, DEDUÇÕES E ALOCAÇÃO
+# =========================================================
+
+if include_dividend_scenario:
+    st.markdown("#### Cenário anual: tributação mínima, deduções e alocação")
+
+    st.caption(
+        "Este quadro compara o resultado líquido isolado dos produtos com uma "
+        "leitura anual da vida tributária do cliente. A lógica não é somar "
+        "impostos como vantagem, mas estimar se impostos já pagos ou retidos "
+        "podem reduzir eventual saldo adicional de tributação mínima, quando "
+        "aplicável ao caso concreto."
+    )
+
+    cdb_ir = 0.0
+    lci_lca_ir = 0.0
+    treasury_ir = 0.0
+    fund_ir = 0.0
+
+    cdb_net = 0.0
+    lci_lca_net = 0.0
+    treasury_net = 0.0
+    fund_net = 0.0
+
+    capital_base = 0.0
+
+    if (
+        comparison_df is not None
+        and not comparison_df.empty
+        and "Produto" in comparison_df.columns
+    ):
+        product_map = {}
+
+        for _, row in comparison_df.iterrows():
+            product_name = str(row["Produto"]).strip()
+            product_map[product_name] = row
+
+        if "CDB / LC" in product_map:
+            cdb_ir = float(product_map["CDB / LC"].get("IR", 0.0))
+            cdb_net = float(
+                product_map["CDB / LC"].get("Valor Líquido", 0.0)
+            )
+
+        if "LCI / LCA" in product_map:
+            lci_lca_ir = float(product_map["LCI / LCA"].get("IR", 0.0))
+            lci_lca_net = float(
+                product_map["LCI / LCA"].get("Valor Líquido", 0.0)
+            )
+
+        if "Tesouro Selic" in product_map:
+            treasury_ir = float(
+                product_map["Tesouro Selic"].get("IR", 0.0)
+            )
+            treasury_net = float(
+                product_map["Tesouro Selic"].get("Valor Líquido", 0.0)
+            )
+
+        if "Fundo DI" in product_map:
+            fund_ir = float(product_map["Fundo DI"].get("IR", 0.0))
+            fund_net = float(
+                product_map["Fundo DI"].get("Valor Líquido", 0.0)
+            )
+
+        if "Total Aportado" in comparison_df.columns:
+            capital_base = float(comparison_df["Total Aportado"].max())
+
+    if capital_base <= 0:
+        capital_base = float(initial_amount)
+
+    annual_dividend_ir = estimated_annual_dividend_ir
+
+    products_for_analysis = [
+        {
+            "Produto": "LCI / LCA",
+            "Valor líquido da aplicação": lci_lca_net,
+            "IR do produto": lci_lca_ir,
+            "IRRF dividendos": annual_dividend_ir,
+        },
+        {
+            "Produto": "CDB / LC",
+            "Valor líquido da aplicação": cdb_net,
+            "IR do produto": cdb_ir,
+            "IRRF dividendos": annual_dividend_ir,
+        },
+        {
+            "Produto": "Tesouro Selic",
+            "Valor líquido da aplicação": treasury_net,
+            "IR do produto": treasury_ir,
+            "IRRF dividendos": annual_dividend_ir,
+        },
+        {
+            "Produto": "Fundo DI",
+            "Valor líquido da aplicação": fund_net,
+            "IR do produto": fund_ir,
+            "IRRF dividendos": annual_dividend_ir,
+        },
+    ]
+
+    scenario_rows = []
+
+    for item in products_for_analysis:
+        tax_already_paid_or_withheld = (
+            item["IR do produto"] + item["IRRF dividendos"]
+        )
+
+        estimated_additional_tax = max(
+            0.0,
+            minimum_tax_due - tax_already_paid_or_withheld
+        )
+
+        lci_tax_already_paid = lci_lca_ir + annual_dividend_ir
+
+        lci_additional_tax = max(
+            0.0,
+            minimum_tax_due - lci_tax_already_paid
+        )
+
+        fiscal_effect_vs_lci = 0.0
+
+        if item["Produto"] != "LCI / LCA":
+            fiscal_effect_vs_lci = (
+                lci_additional_tax - estimated_additional_tax
+            )
+
+        comparable_net_value = (
+            item["Valor líquido da aplicação"] + fiscal_effect_vs_lci
+        )
+
+        isolated_net_return_rate = 0.0
+        comparable_net_return_rate = 0.0
+
+        if capital_base > 0:
+            isolated_net_return_rate = (
+                (item["Valor líquido da aplicação"] / capital_base) - 1
+            ) * 100
+
+            comparable_net_return_rate = (
+                (comparable_net_value / capital_base) - 1
+            ) * 100
+
+        if item["Produto"] == "LCI / LCA":
+            decision_reading = (
+                "Referência isenta. Vence quando a análise considera apenas "
+                "o valor líquido da aplicação."
+            )
+        else:
+            if fiscal_effect_vs_lci > 0:
+                decision_reading = (
+                    "Produto tributado com efeito fiscal potencial. Deve ser "
+                    "comparado com a LCI/LCA pelo valor comparável no cenário anual."
+                )
+            else:
+                decision_reading = (
+                    "Produto tributado sem ganho fiscal relevante neste cenário. "
+                    "A decisão deve priorizar rentabilidade líquida, liquidez e prazo."
+                )
+
+        scenario_rows.append(
+            {
+                "Produto": item["Produto"],
+                "Valor líquido da aplicação": item[
+                    "Valor líquido da aplicação"
+                ],
+                "Rentab. líquida isolada (%)": isolated_net_return_rate,
+                "IR do produto": item["IR do produto"],
+                "IRRF dividendos": item["IRRF dividendos"],
+                "Saldo adicional estimado": estimated_additional_tax,
+                "Efeito fiscal potencial vs LCI/LCA": fiscal_effect_vs_lci,
+                "Valor comparável no cenário": comparable_net_value,
+                "Rentab. comparável no cenário (%)": comparable_net_return_rate,
+                "Decisão consultiva": decision_reading,
+            }
+        )
+
+    annual_tax_scenario_df = pd.DataFrame(scenario_rows)
+
+    display_annual_tax_scenario_df = annual_tax_scenario_df.copy()
+
+    money_columns = [
+        "Valor líquido da aplicação",
+        "IR do produto",
+        "IRRF dividendos",
+        "Saldo adicional estimado",
+        "Efeito fiscal potencial vs LCI/LCA",
+        "Valor comparável no cenário",
+    ]
+
+    for column in money_columns:
+        display_annual_tax_scenario_df[column] = (
+            display_annual_tax_scenario_df[column].apply(format_currency)
+        )
+
+    percent_columns = [
+        "Rentab. líquida isolada (%)",
+        "Rentab. comparável no cenário (%)",
+    ]
+
+    for column in percent_columns:
+        display_annual_tax_scenario_df[column] = (
+            display_annual_tax_scenario_df[column].apply(
+                lambda value: f"{value:.2f}%"
+            )
+        )
+
+    st.dataframe(
+        display_annual_tax_scenario_df,
+        width="stretch",
+        hide_index=True
+    )
+
+    isolated_winner_row = annual_tax_scenario_df.sort_values(
+        by="Valor líquido da aplicação",
+        ascending=False
+    ).iloc[0]
+
+    adjusted_winner_row = annual_tax_scenario_df.sort_values(
+        by="Valor comparável no cenário",
+        ascending=False
+    ).iloc[0]
+
+    cdb_row = annual_tax_scenario_df[
+        annual_tax_scenario_df["Produto"] == "CDB / LC"
+    ].iloc[0]
+
+    lci_row = annual_tax_scenario_df[
+        annual_tax_scenario_df["Produto"] == "LCI / LCA"
+    ].iloc[0]
+
+    net_difference_lci_vs_cdb = (
+        lci_row["Valor líquido da aplicação"]
+        - cdb_row["Valor líquido da aplicação"]
+    )
+
+    fiscal_effect_cdb_vs_lci = cdb_row[
+        "Efeito fiscal potencial vs LCI/LCA"
+    ]
+
+    st.markdown("##### Leitura consultiva do cenário")
+
+    st.success(
+        f"No resultado líquido isolado da aplicação, o melhor produto é "
+        f"{isolated_winner_row['Produto']}, com valor líquido estimado de "
+        f"{format_currency(isolated_winner_row['Valor líquido da aplicação'])}."
+    )
+
+    if minimum_tax_due > 0:
+        st.info(
+            f"Na leitura fiscal anual, a renda anual informada gera IR mínimo "
+            f"estimado de {format_currency(minimum_tax_due)}, com alíquota "
+            f"mínima estimada de {minimum_tax_rate * 100:.2f}%. O CDB/LC "
+            f"gera {format_currency(cdb_ir)} de IR próprio no produto. "
+            f"Frente à LCI/LCA, isso representa efeito fiscal potencial de "
+            f"{format_currency(fiscal_effect_cdb_vs_lci)}."
+        )
+
+        if fiscal_effect_cdb_vs_lci > net_difference_lci_vs_cdb:
+            st.success(
+                f"A diferença líquida da LCI/LCA sobre o CDB/LC é de "
+                f"{format_currency(net_difference_lci_vs_cdb)}. Como o "
+                f"efeito fiscal potencial do CDB/LC supera essa diferença, "
+                f"o CDB/LC merece análise prioritária no cenário fiscal anual."
+            )
+        else:
+            st.warning(
+                f"A diferença líquida da LCI/LCA sobre o CDB/LC é de "
+                f"{format_currency(net_difference_lci_vs_cdb)}. Como o "
+                f"efeito fiscal potencial do CDB/LC não supera essa diferença, "
+                f"a LCI/LCA permanece mais forte neste cenário."
+            )
+    else:
+        st.info(
+            "Como a renda anual informada não gera IR mínimo estimado, o "
+            "cenário fiscal anual não altera a decisão. A comparação deve "
+            "priorizar valor líquido da aplicação, liquidez, prazo e risco."
+        )
+
+    st.warning(
+        "Atenção: esta simulação é estimativa. Ela não representa compensação "
+        "automática mensal entre produtos financeiros e dividendos. A "
+        "elegibilidade das deduções e o cálculo definitivo dependem da "
+        "composição da renda anual do cliente e devem ser validados por "
+        "contador ou especialista tributário."
+    )
+
+    integrated_tax_scenario = {
+        "include_dividend_scenario": include_dividend_scenario,
+        "monthly_dividends": monthly_dividends,
+        "same_payer_dividends": same_payer_dividends,
+        "months_with_dividends": months_with_dividends,
+        "taxable_monthly_dividends": taxable_monthly_dividends,
+        "estimated_monthly_dividend_ir": estimated_monthly_dividend_ir,
+        "estimated_annual_dividend_ir": estimated_annual_dividend_ir,
+        "annual_total_income": annual_total_income,
+        "minimum_tax_rate": minimum_tax_rate,
+        "minimum_tax_due": minimum_tax_due,
+        "isolated_winner_product": isolated_winner_row["Produto"],
+        "isolated_winner_net_value": float(
+            isolated_winner_row["Valor líquido da aplicação"]
+        ),
+        "adjusted_winner_product": adjusted_winner_row["Produto"],
+        "adjusted_winner_value": float(
+            adjusted_winner_row["Valor comparável no cenário"]
+        ),
+        "net_difference_lci_vs_cdb": float(net_difference_lci_vs_cdb),
+        "fiscal_effect_cdb_vs_lci": float(fiscal_effect_cdb_vs_lci),
+        "capital_base": float(capital_base),
+        "annual_tax_scenario_records": annual_tax_scenario_df.to_dict("records"),
+    }
+    
 
 # =========================================================
 # DETALHAMENTO DO FUNDO DI
@@ -1244,7 +1688,8 @@ if use_market_intelligence:
 
                 st.plotly_chart(
                     curve_fig,
-                    width="stretch"
+                    width="stretch",
+                    key="curve_simplified_interest_rate_chart"
                 )
 
                 curve_values = curve_chart_df[
@@ -1306,235 +1751,11 @@ em relação à taxa corrente, caracterizando **{movimento_curva}**.
                         hide_index=True
                     )
 
-           # =========================================================
-            # CURVA SIMPLIFICADA DE JUROS
-            # =========================================================
-
-            st.markdown("#### Curva Simplificada de Juros")
-
-            movimento_curva = None
-            spread_final = 0
-            leitura_movimento = ""
-
-            if curve_df is None or curve_df.empty:
-                st.warning("Curva simplificada não disponível nesta execução.")
-            else:
-                st.caption(
-                    f"Classificação da curva: {curve_shape}"
-                )
-
-                curve_chart_df = curve_df.copy()
-
-                curve_chart_df["Vértice"] = (
-                    curve_chart_df["Vértice"].astype(str)
-                )
-
-                curve_chart_df["Taxa Selic Esperada (%)"] = (
-                    curve_chart_df["Taxa Selic Esperada (%)"].astype(float)
-                )
-
-                selic_atual_referencia = curve_chart_df[
-                    "Taxa Selic Esperada (%)"
-                ].iloc[0]
-
-                curve_chart_df["Spread vs Selic Atual (p.p.)"] = (
-                    curve_chart_df["Taxa Selic Esperada (%)"]
-                    - selic_atual_referencia
-                )
-
-                curve_chart_df["Rótulo"] = curve_chart_df[
-                    "Taxa Selic Esperada (%)"
-                ].apply(
-                    lambda value: f"{value:.2f}%"
-                )
-
-                spread_final = curve_chart_df[
-                    "Spread vs Selic Atual (p.p.)"
-                ].iloc[-1]
-
-                limite_neutro = 0.10
-
-                if spread_final > limite_neutro:
-                    movimento_curva = "abertura da curva"
-                    leitura_movimento = (
-                        "A curva está abrindo em relação à Selic atual. "
-                        "Isso indica que as expectativas de mercado apontam para juros futuros "
-                        "acima da taxa corrente, o que pode favorecer uma conversa consultiva "
-                        "sobre proteção de taxa, prazo e alternativas prefixadas, sempre conforme "
-                        "o perfil e a necessidade de liquidez do cliente."
-                    )
-                elif spread_final < -limite_neutro:
-                    movimento_curva = "fechamento da curva"
-                    leitura_movimento = (
-                        "A curva está fechando em relação à Selic atual. "
-                        "Isso indica que as expectativas de mercado apontam para juros futuros "
-                        "abaixo da taxa corrente, o que reforça a importância de avaliar o risco "
-                        "de reinvestimento, o horizonte da aplicação e o momento adequado para "
-                        "travar taxas em produtos prefixados ou híbridos."
-                    )
-                else:
-                    movimento_curva = "curva praticamente estável"
-                    leitura_movimento = (
-                        "A curva está praticamente estável em relação à Selic atual. "
-                        "Nesse cenário, a leitura consultiva deve priorizar liquidez, prazo, "
-                        "tributação, previsibilidade e aderência ao objetivo financeiro do cliente."
-                    )
-
-                curve_fig = go.Figure()
-
-                curve_fig.add_trace(
-                    go.Scatter(
-                        x=curve_chart_df["Vértice"],
-                        y=curve_chart_df["Taxa Selic Esperada (%)"],
-                        mode="lines+markers+text",
-                        text=curve_chart_df["Rótulo"],
-                        textposition="top center",
-                        name="Selic esperada",
-                        line=dict(
-                            width=4,
-                            shape="spline"
-                        ),
-                        marker=dict(
-                            size=12,
-                            symbol="circle"
-                        ),
-                        fill="tozeroy",
-                        hovertemplate=(
-                            "<b>Vértice:</b> %{x}<br>"
-                            "<b>Taxa Selic esperada:</b> %{y:.2f}%"
-                            "<extra></extra>"
-                        )
-                    )
-                )
-
-                curve_fig.add_trace(
-                    go.Scatter(
-                        x=curve_chart_df["Vértice"],
-                        y=[selic_atual_referencia] * len(curve_chart_df),
-                        mode="lines",
-                        name="Selic atual",
-                        line=dict(
-                            width=2,
-                            dash="dash"
-                        ),
-                        hovertemplate=(
-                            "<b>Referência:</b> Selic atual<br>"
-                            "<b>Taxa:</b> %{y:.2f}%"
-                            "<extra></extra>"
-                        )
-                    )
-                )
-
-                curve_fig.update_layout(
-                    title={
-                        "text": (
-                            f"Curva Simplificada de Juros — "
-                            f"{str(curve_shape).title()} | "
-                            f"{movimento_curva.title()}"
-                        ),
-                        "x": 0.03,
-                        "xanchor": "left"
-                    },
-                    height=500,
-                    template="plotly_white",
-                    xaxis_title="Horizonte da expectativa",
-                    yaxis_title="Taxa Selic esperada (%)",
-                    showlegend=True,
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="right",
-                        x=1
-                    ),
-                    margin=dict(
-                        t=100,
-                        r=30,
-                        l=40,
-                        b=60
-                    ),
-                    font=dict(
-                        size=12
-                    )
-                )
-
-                curve_fig.update_yaxes(
-                    ticksuffix="%",
-                    showgrid=True,
-                    zeroline=False
-                )
-
-                curve_fig.update_xaxes(
-                    showgrid=False
-                )
-
-                st.plotly_chart(
-                    curve_fig,
-                    width="stretch"
-                )
-
-                curve_values = curve_chart_df[
-                    "Taxa Selic Esperada (%)"
-                ].tolist()
-
-                curve_labels = curve_chart_df[
-                    "Vértice"
-                ].tolist()
-
-                if len(curve_values) >= 3:
-                    col_curve_1, col_curve_2, col_curve_3, col_curve_4 = (
-                        st.columns(4)
-                    )
-
-                    col_curve_1.metric(
-                        "Selic atual",
-                        f"{selic_atual_referencia:.2f}%"
-                    )
-
-                    col_curve_2.metric(
-                        curve_labels[1],
-                        f"{curve_values[1]:.2f}%",
-                        delta=(
-                            f"{curve_values[1] - selic_atual_referencia:.2f} p.p."
-                        )
-                    )
-
-                    col_curve_3.metric(
-                        curve_labels[2],
-                        f"{curve_values[2]:.2f}%",
-                        delta=(
-                            f"{curve_values[2] - selic_atual_referencia:.2f} p.p."
-                        )
-                    )
-
-                    col_curve_4.metric(
-                        "Movimento",
-                        movimento_curva.title(),
-                        delta=f"{spread_final:.2f} p.p."
-                    )
-
-                st.markdown("##### Leitura da curva em relação à Selic atual")
-
-                st.markdown(
-                    f"""
-A Selic atual foi utilizada como referência da curva. 
-O último vértice da curva apresenta diferença de **{spread_final:.2f} ponto percentual** 
-em relação à taxa corrente, caracterizando **{movimento_curva}**.
-
-{leitura_movimento}
-"""
-                )
-
-                with st.expander("Ver tabela técnica da curva"):
-                    st.dataframe(
-                        curve_chart_df,
-                        width="stretch",
-                        hide_index=True
-                    )
         except Exception as e:
             st.warning(
                 f"Não foi possível carregar a inteligência de mercado: {e}"
             )
+
 
 # =========================================================
 # RELATÓRIO CONSULTIVO
@@ -1623,6 +1844,8 @@ report_options = {
     "aviso_tecnico": incluir_aviso_tecnico,
 }
 
+st.write("DEBUG RELATÓRIO - integrated_tax_scenario:", integrated_tax_scenario)
+
 word_file = generate_word_report(
     client_name=client_name,
     advisor_name=advisor_name,
@@ -1640,28 +1863,19 @@ word_file = generate_word_report(
     treasury_annual_fee=treasury_annual_fee,
     fund_percentage=fund_percentage,
     fund_annual_fee=fund_annual_fee,
-    fund_type=fund_result.fund_type,
-    apply_come_cotas=apply_come_cotas,
-    fund_come_cotas_tax=fund_result.come_cotas_tax,
-    fund_redemption_tax=fund_result.redemption_tax,
-    fund_total_tax=fund_result.total_tax,
-    fund_admin_fee_impact=fund_result.admin_fee_impact,
-    fund_net_final_amount=fund_result.net_final_amount,
-    fund_net_return_percentage=fund_result.net_return_percentage,
-    fund_come_cotas_rate=(
-        0.15
-        if fund_result.fund_type == FundTaxService.LONG_TERM
-        else 0.20
-    ),
-    fund_final_ir_rate=fund_tax_service.get_final_ir_rate(
-        fund_months * 30,
-        fund_result.fund_type
-    ),
     comparison_df=comparison_df,
     cashflow_df=report_cashflow_df,
     monthly_df=report_monthly_df,
     consultive_analysis=analysis,
     market_intelligence=st.session_state.get("market_intelligence"),
+    include_dividend_scenario=include_dividend_scenario,
+    monthly_dividends=monthly_dividends,
+    same_payer_dividends=same_payer_dividends,
+    months_with_dividends=months_with_dividends,
+    taxable_monthly_dividends=taxable_monthly_dividends,
+    estimated_monthly_dividend_ir=estimated_monthly_dividend_ir,
+    estimated_annual_dividend_ir=estimated_annual_dividend_ir,
+    integrated_tax_scenario=integrated_tax_scenario,
     report_options=report_options,
 )
 
@@ -1673,7 +1887,6 @@ st.download_button(
     file_name=file_name,
     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 )
-
 
 
 # =========================================================
