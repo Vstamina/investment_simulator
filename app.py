@@ -1,5 +1,7 @@
 from datetime import date
 from modules.ibovespa_cdi_module import render_ibovespa_cdi_module
+from modules.curve_investment_module import render_curve_investment_module
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -1439,14 +1441,7 @@ st.dataframe(
     hide_index=True
 )
 
-# Tabela completa: fica disponível para conferência técnica
-with st.expander("Ver tabela técnica completa"):
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True
-    )
-    
+
 
 # =========================================================
 # EVOLUÇÃO PATRIMONIAL
@@ -1610,8 +1605,8 @@ with col_chart2:
         height=540,
         margin=dict(t=70, r=20, l=20, b=20),
         legend=dict(
-            font=dict(size=10),
-            orientation="v"
+        font=dict(size=10),
+        orientation="v"
         ),
         font=dict(size=11)
     )
@@ -1639,8 +1634,6 @@ st.markdown(
 
 st.markdown(analysis)
 
-
-
 # =========================================================
 # INTELIGÊNCIA DE MERCADO E FORESIGHT
 # =========================================================
@@ -1665,10 +1658,7 @@ if use_market_intelligence:
         try:
             with st.spinner("Buscando dados públicos de mercado..."):
                 market_intelligence = generate_market_intelligence()
-
                 st.session_state["market_intelligence"] = market_intelligence
-
-                market_intelligence = generate_market_intelligence()
 
             bacen_df = market_intelligence.get("bacen_df")
             focus_df = market_intelligence.get("focus_df")
@@ -1708,233 +1698,60 @@ if use_market_intelligence:
                     hide_index=True
                 )
 
-
             # =========================================================
             # CURVA SIMPLIFICADA DE JUROS
             # =========================================================
 
             st.markdown("#### Curva Simplificada de Juros")
 
-            movimento_curva = None
-            spread_final = 0
-            leitura_movimento = ""
-
             if curve_df is None or curve_df.empty:
-                st.warning("Curva simplificada não disponível nesta execução.")
+                st.warning("Curva simplificada de juros não disponível nesta execução.")
             else:
-                st.caption(
-                    f"Classificação da curva: {curve_shape}"
-                )
-
-                curve_chart_df = curve_df.copy()
-
-                curve_chart_df["Vértice"] = (
-                    curve_chart_df["Vértice"].astype(str)
-                )
-
-                curve_chart_df["Taxa Selic Esperada (%)"] = (
-                    curve_chart_df["Taxa Selic Esperada (%)"].astype(float)
-                )
-
-                selic_atual_referencia = curve_chart_df[
-                    "Taxa Selic Esperada (%)"
-                ].iloc[0]
-
-                curve_chart_df["Spread vs Selic Atual (p.p.)"] = (
-                    curve_chart_df["Taxa Selic Esperada (%)"]
-                    - selic_atual_referencia
-                )
-
-                curve_chart_df["Rótulo"] = curve_chart_df[
-                    "Taxa Selic Esperada (%)"
-                ].apply(
-                    lambda value: f"{value:.2f}%"
-                )
-
-                spread_final = curve_chart_df[
-                    "Spread vs Selic Atual (p.p.)"
-                ].iloc[-1]
-
-                limite_neutro = 0.10
-
-                if spread_final > limite_neutro:
-                    movimento_curva = "abertura da curva"
-                    leitura_movimento = (
-                        "A curva está abrindo em relação à Selic atual. "
-                        "Isso indica que as expectativas de mercado apontam para juros futuros "
-                        "acima da taxa corrente, o que pode favorecer uma conversa consultiva "
-                        "sobre proteção de taxa, prazo e alternativas prefixadas, sempre conforme "
-                        "o perfil e a necessidade de liquidez do cliente."
-                    )
-                elif spread_final < -limite_neutro:
-                    movimento_curva = "fechamento da curva"
-                    leitura_movimento = (
-                        "A curva está fechando em relação à Selic atual. "
-                        "Isso indica que as expectativas de mercado apontam para juros futuros "
-                        "abaixo da taxa corrente, o que reforça a importância de avaliar o risco "
-                        "de reinvestimento, o horizonte da aplicação e o momento adequado para "
-                        "travar taxas em produtos prefixados ou híbridos."
-                    )
-                else:
-                    movimento_curva = "curva praticamente estável"
-                    leitura_movimento = (
-                        "A curva está praticamente estável em relação à Selic atual. "
-                        "Nesse cenário, a leitura consultiva deve priorizar liquidez, prazo, "
-                        "tributação, previsibilidade e aderência ao objetivo financeiro do cliente."
-                    )
-
-                curve_fig = go.Figure()
-
-                curve_fig.add_trace(
-                    go.Scatter(
-                        x=curve_chart_df["Vértice"],
-                        y=curve_chart_df["Taxa Selic Esperada (%)"],
-                        mode="lines+markers+text",
-                        text=curve_chart_df["Rótulo"],
-                        textposition="top center",
-                        name="Selic esperada",
-                        line=dict(
-                            width=4,
-                            shape="spline"
-                        ),
-                        marker=dict(
-                            size=12,
-                            symbol="circle"
-                        ),
-                        fill="tozeroy",
-                        hovertemplate=(
-                            "<b>Vértice:</b> %{x}<br>"
-                            "<b>Taxa Selic esperada:</b> %{y:.2f}%"
-                            "<extra></extra>"
-                        )
-                    )
-                )
-
-                curve_fig.add_trace(
-                    go.Scatter(
-                        x=curve_chart_df["Vértice"],
-                        y=[selic_atual_referencia] * len(curve_chart_df),
-                        mode="lines",
-                        name="Selic atual",
-                        line=dict(
-                            width=2,
-                            dash="dash"
-                        ),
-                        hovertemplate=(
-                            "<b>Referência:</b> Selic atual<br>"
-                            "<b>Taxa:</b> %{y:.2f}%"
-                            "<extra></extra>"
-                        )
-                    )
-                )
-
-                curve_fig.update_layout(
-                    title={
-                        "text": (
-                            f"Curva Simplificada de Juros — "
-                            f"{str(curve_shape).title()} | "
-                            f"{movimento_curva.title()}"
-                        ),
-                        "x": 0.03,
-                        "xanchor": "left"
-                    },
-                    height=500,
-                    template="plotly_white",
-                    xaxis_title="Horizonte da expectativa",
-                    yaxis_title="Taxa Selic esperada (%)",
-                    showlegend=True,
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="right",
-                        x=1
-                    ),
-                    margin=dict(
-                        t=100,
-                        r=30,
-                        l=40,
-                        b=60
-                    ),
-                    font=dict(
-                        size=12
-                    )
-                )
-
-                curve_fig.update_yaxes(
-                    ticksuffix="%",
-                    showgrid=True,
-                    zeroline=False
-                )
-
-                curve_fig.update_xaxes(
-                    showgrid=False
-                )
-
-                st.plotly_chart(
-                    curve_fig,
+                st.dataframe(
+                    curve_df,
                     width="stretch",
-                    key="curve_simplified_interest_rate_chart"
+                    hide_index=True
                 )
 
-                curve_values = curve_chart_df[
-                    "Taxa Selic Esperada (%)"
-                ].tolist()
-
-                curve_labels = curve_chart_df[
-                    "Vértice"
-                ].tolist()
-
-                if len(curve_values) >= 3:
-                    col_curve_1, col_curve_2, col_curve_3, col_curve_4 = (
-                        st.columns(4)
-                    )
-
-                    col_curve_1.metric(
-                        "Selic atual",
-                        f"{selic_atual_referencia:.2f}%"
-                    )
-
-                    col_curve_2.metric(
-                        curve_labels[1],
-                        f"{curve_values[1]:.2f}%",
-                        delta=(
-                            f"{curve_values[1] - selic_atual_referencia:.2f} p.p."
-                        )
-                    )
-
-                    col_curve_3.metric(
-                        curve_labels[2],
-                        f"{curve_values[2]:.2f}%",
-                        delta=(
-                            f"{curve_values[2] - selic_atual_referencia:.2f} p.p."
-                        )
-                    )
-
-                    col_curve_4.metric(
-                        "Movimento",
-                        movimento_curva.title(),
-                        delta=f"{spread_final:.2f} p.p."
-                    )
-
-                st.markdown("##### Leitura da curva em relação à Selic atual")
-
-                st.markdown(
-                    f"""
-A Selic atual foi utilizada como referência da curva. 
-O último vértice da curva apresenta diferença de **{spread_final:.2f} ponto percentual** 
-em relação à taxa corrente, caracterizando **{movimento_curva}**.
-
-{leitura_movimento}
-"""
-                )
-
-                with st.expander("Ver tabela técnica da curva"):
+                with st.expander("Ver tabela técnica da curva", expanded=False):
                     st.dataframe(
-                        curve_chart_df,
+                        curve_df,
                         width="stretch",
                         hide_index=True
                     )
+
+                # =========================================================
+                # SIMULAÇÃO DE INVESTIMENTO PELA CURVA
+                # =========================================================
+
+                try:
+                    curva_simulacao_df = curve_df.rename(
+                        columns={
+                            "Vértice": "ano",
+                            "Taxa Selic Esperada (%)": "taxa"
+                        }
+                    )
+
+                    curva_simulacao_df = curva_simulacao_df[["ano", "taxa"]].copy()
+
+                    with st.expander("Simular investimento pela curva", expanded=False):
+                        render_curve_investment_module(curva_simulacao_df)
+
+                except Exception as error:
+                    st.warning(
+                        f"Não foi possível carregar a simulação pela curva: {error}"
+                    )
+
+            # =========================================================
+            # LEITURA FORESIGHT DA CURVA
+            # =========================================================
+
+            st.markdown("#### Leitura Foresight da Curva")
+
+            if market_reading:
+                st.write(market_reading)
+            else:
+                st.info("Leitura Foresight não disponível nesta execução.")
 
         except Exception as e:
             st.warning(
