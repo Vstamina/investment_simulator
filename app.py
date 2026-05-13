@@ -7,6 +7,38 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+# =========================================================
+# CONTROLE DE ACESSO
+# =========================================================
+
+def check_password():
+    if "access_granted" not in st.session_state:
+        st.session_state["access_granted"] = False
+
+    if st.session_state["access_granted"]:
+        return True
+
+    st.markdown("## Acesso restrito")
+
+    password = st.text_input(
+        "Digite a senha para acessar o simulador",
+        type="password",
+        key="login_password"
+    )
+
+    if st.button("Entrar", key="login_button"):
+        if password == "prosperidade":
+            st.session_state["access_granted"] = True
+            st.rerun()
+        else:
+            st.error("Senha incorreta.")
+
+    return False
+
+
+if not check_password():
+    st.stop()
+
 
 def formatar_pp(valor):
     return f"{valor:.2f}".replace(".", ",") + " p.p."
