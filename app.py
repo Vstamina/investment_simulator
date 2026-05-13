@@ -1,8 +1,10 @@
 from datetime import date
+from modules.ibovespa_cdi_module import render_ibovespa_cdi_module
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+
 
 
 # =========================================================
@@ -413,16 +415,6 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("Parâmetros por Produto")
-
-    cdb_percentage = st.number_input(
-        "CDB / LC (% do CDI)",
-        min_value=0.0,
-        value=105.0,
-        step=1.0,
-        format="%.2f"
-    )
-
     lci_lca_percentage = st.number_input(
         "LCI / LCA (% do CDI)",
         min_value=0.0,
@@ -712,6 +704,76 @@ if end_date <= start_date:
 
 
 # =========================================================
+# PARÂMETROS POR PRODUTO
+# =========================================================
+
+st.markdown("### Parâmetros por Produto")
+
+col_produto_1, col_produto_2 = st.columns(2)
+
+with col_produto_1:
+    cdb_percentage = st.number_input(
+        "CDB / LC (% do CDI)",
+        min_value=0.0,
+        max_value=250.0,
+        value=105.0,
+        step=1.0,
+        format="%.2f",
+        key="cdb_percentage_input"
+    )
+
+    lci_lca_percentage = st.number_input(
+        "LCI / LCA (% do CDI)",
+        min_value=0.0,
+        max_value=250.0,
+        value=95.0,
+        step=1.0,
+        format="%.2f",
+        key="lci_lca_percentage_input"
+    )
+
+    treasury_percentage = st.number_input(
+        "Tesouro Selic (% do CDI aproximado)",
+        min_value=0.0,
+        max_value=250.0,
+        value=100.0,
+        step=1.0,
+        format="%.2f",
+        key="treasury_percentage_input"
+    )
+
+with col_produto_2:
+    treasury_annual_fee = st.number_input(
+        "Taxa/custo anual Tesouro Selic (%)",
+        min_value=0.0,
+        max_value=10.0,
+        value=0.20,
+        step=0.05,
+        format="%.2f",
+        key="treasury_annual_fee_input"
+    )
+
+    fund_percentage = st.number_input(
+        "Fundo DI (% do CDI)",
+        min_value=0.0,
+        max_value=250.0,
+        value=100.0,
+        step=1.0,
+        format="%.2f",
+        key="fund_percentage_input"
+    )
+
+    fund_annual_fee = st.number_input(
+        "Taxa de administração Fundo DI (%)",
+        min_value=0.0,
+        max_value=10.0,
+        value=0.50,
+        step=0.05,
+        format="%.2f",
+        key="fund_annual_fee_input"
+    )
+
+# =========================================================
 # EXECUÇÃO DA SIMULAÇÃO
 # =========================================================
 
@@ -800,7 +862,7 @@ else:
     daily_df = pd.DataFrame()
     monthly_df = pd.DataFrame()
     evolution_x = "Mês"
-    
+
 
 # =========================================================
 # AJUSTE DO FUNDO DI COM COME-COTAS
@@ -1646,6 +1708,7 @@ if use_market_intelligence:
                     hide_index=True
                 )
 
+
             # =========================================================
             # CURVA SIMPLIFICADA DE JUROS
             # =========================================================
@@ -2007,6 +2070,29 @@ st.download_button(
     file_name=file_name,
     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 )
+
+# =========================================================
+# RADAR IBOVESPA x CDI
+# =========================================================
+
+st.divider()
+
+with st.expander("Radar Ibovespa x CDI", expanded=False):
+
+    st.info(
+        "Módulo complementar de inteligência de mercado. "
+        "Compara o desempenho histórico do Ibovespa com o CDI, identifica ciclos relevantes "
+        "e gera uma leitura consultiva para apoio à conversa com o cliente."
+    )
+
+    ativar_ibovespa_cdi = st.checkbox(
+        "Ativar análise Ibovespa x CDI",
+        value=False,
+        key="ativar_ibovespa_cdi_relatorio_final"
+    )
+
+    if ativar_ibovespa_cdi:
+        render_ibovespa_cdi_module()
 
 
 # =========================================================
