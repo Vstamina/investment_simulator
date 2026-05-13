@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 
+
 def aliquota_ir_regressiva(dias: int) -> float:
     if dias <= 180:
         return 0.225
@@ -17,19 +18,24 @@ def taxa_anual_para_mensal(taxa_anual_pct: float) -> float:
     return (1 + taxa_anual) ** (1 / 12) - 1
 
 
+def formatar_moeda(valor: float) -> str:
+    return f"R$ {valor:,.2f}"
+
+
+def formatar_pct(valor: float) -> str:
+    return f"{valor * 100:.2f}%"
+
+
 def simular_investimento_pela_curva(
     valor_inicial: float,
     curva_df: pd.DataFrame,
-    produto_tributavel: bool = True
+    produto_tributavel: bool = True,
+    prazo_meses: int | None = None,
+    percentual_cdi: float = 100.0,
+    taxa_custo_anual: float = 0.0,
 ) -> tuple[pd.DataFrame, dict]:
-    """
-    Simula aplicação de aporte único usando a curva anual informada.
-    Espera curva_df com colunas:
-    - ano
-    - taxa
-    """
 
-    if curva_df.empty:
+    if curva_df is None or curva_df.empty:
         return pd.DataFrame(), {}
 
     curva = curva_df.copy()
@@ -41,12 +47,16 @@ def simular_investimento_pela_curva(
 
     for _, row in curva.iterrows():
         ano = int(row["ano"])
-        taxa_anual_pct = float(row["taxa"])
+
+        taxa_anual_pct = float(row["taxa"]) * (percentual_cdi / 100)
+        taxa_anual_pct = taxa_anual_pct - taxa_custo_anual
+
         taxa_mensal = taxa_anual_para_mensal(taxa_anual_pct)
 
-        saldo_inicio_ano = saldo
-
         for mes in range(1, 13):
+            if prazo_meses is not None and mes_global >= prazo_meses:
+                break
+
             mes_global += 1
             saldo = saldo * (1 + taxa_mensal)
 
@@ -77,7 +87,8 @@ def simular_investimento_pela_curva(
                 }
             )
 
-        saldo_fim_ano = saldo
+        if prazo_meses is not None and mes_global >= prazo_meses:
+            break
 
     resultado_df = pd.DataFrame(linhas)
 
@@ -149,19 +160,80 @@ def grafico_investimento_pela_curva(resultado_df: pd.DataFrame) -> go.Figure:
             yanchor="bottom",
             y=1.02,
             xanchor="right",
-            x=1
+            x=1,
         ),
     )
 
     return fig
 
 
-def formatar_moeda(valor: float) -> str:
-    return f"R$ {valor:,.2f}"
+def simular_produtos_pela_curva(
+    valor_inicial: float,
+    curva_df: pd.DataFrame,
+    prazo_meses: int,
+    cdb_percentual: float,
+    lci_lca_percentual: float,
+    tesouro_percentual: float,
+    tesouro_custo_anual: float,
+    fundo_percentual: float,
+    fundo_taxa_anual: float,
+) -> pd.DataFrame:
 
+    produtos = [
+        {
+            "Produto": "CDB / LC",
+            "Percentual": cdb_percentual,
+            "Tributável": True,
+            "Custo anual": 0.0,
+        },
+        {
+            "Produto": "LCI / LCA",
+            "Percentual": lci_lca_percentual,
+            "Tributável": False,
+            "Custo anual": 0.0,
+        },
+        {
+            "Produto": "Tesouro Selic",
+            "Percentual": tesouro_percentual,
+            "Tributável": True,
+            "Custo anual": tesouro_custo_anual,
+        },
+        {
+            "Produto": "Fundo DI",
+            "Percentual": fundo_percentual,
+            "Tributável": True,
+            "Custo anual": fundo_taxa_anual,
+        },
+    ]
 
-def formatar_pct(valor: float) -> str:
-    return f"{valor * 100:.2f}%"
+    linhas = []
+
+    for produto in produtos:
+        _, metricas = simular_investimento_pela_curva(
+            valor_inicial=valor_inicial,
+            curva_df=curva_df,
+            produto_tributavel=produto["Tributável"],
+            prazo_meses=prazo_meses,
+            percentual_cdi=produto["Percentual"],
+            taxa_custo_anual=produto["Custo anual"],
+        )
+
+        if metricas:
+            linhas.append(
+                {
+                    "Produto": produto["Produto"],
+                    "% da curva/CDI": produto["Percentual"],
+                    "Tributação": "Tributável" if produto["Tributável"] else "Isento",
+                    "Custo anual": produto["Custo anual"],
+                    "Valor bruto final": metricas["valor_bruto_final"],
+                    "IR estimado": metricas["ir_total"],
+                    "Valor líquido final": metricas["valor_liquido_final"],
+                    "Retorno líquido": metricas["retorno_liquido"],
+                    "Retorno líquido ao ano": metricas["retorno_anual_liquido"],
+                }
+            )
+
+    return pd.DataFrame(linhas)
 
 
 def render_curve_investment_module(curva_df: pd.DataFrame):
@@ -181,177 +253,95 @@ def render_curve_investment_module(curva_df: pd.DataFrame):
             min_value=0.0,
             value=100000.0,
             step=1000.0,
-            key="curva_valor_inicial"
+            key="curva_valor_inicial",
         )
 
     with col2:
-        produto_tributavel = st.selectbox(
-            "Classificação fiscal",
-            ["Tributável", "Isento"],
-            key="curva_classificacao_fiscal"
-        ) == "Tributável"
-
-    resultado_df, metricas = simular_investimento_pela_curva(
-        valor_inicial=valor_inicial,
-        curva_df=curva_df,
-        produto_tributavel=produto_tributavel
-    )
-
-    if resultado_df.empty:
-        st.warning("Não foi possível simular o investimento pela curva.")
-        return
-
-    col_a, col_b, col_c, col_d = st.columns(4)
-
-    col_a.metric(
-        "Valor bruto final",
-        formatar_moeda(metricas["valor_bruto_final"])
-    )
-
-    col_b.metric(
-        "Valor líquido final",
-        formatar_moeda(metricas["valor_liquido_final"])
-    )
-
-    col_c.metric(
-        "IR estimado",
-        formatar_moeda(metricas["ir_total"])
-    )
-
-    col_d.metric(
-        "Retorno líquido acumulado",
-        formatar_pct(metricas["retorno_liquido"])
-    )
-
-    col_e, col_f, col_g = st.columns(3)
-
-    col_e.metric(
-        "Retorno bruto acumulado",
-        formatar_pct(metricas["retorno_bruto"])
-    )
-
-    col_f.metric(
-        "Retorno líquido ao mês",
-        formatar_pct(metricas["retorno_mensal_liquido"])
-    )
-
-    col_g.metric(
-        "Retorno líquido ao ano",
-        formatar_pct(metricas["retorno_anual_liquido"])
-    )
-
-    st.plotly_chart(
-        grafico_investimento_pela_curva(resultado_df),
-        use_container_width=True
-    )
-
-    with st.expander("Ver tabela mensal da simulação pela curva"):
-        tabela = resultado_df.copy()
-        tabela["taxa_anual_pct"] = tabela["taxa_anual_pct"].map(lambda x: f"{x:.2f}%")
-        tabela["taxa_mensal_pct"] = tabela["taxa_mensal_pct"].map(lambda x: f"{x:.4f}%")
-        tabela["saldo_bruto"] = tabela["saldo_bruto"].map(formatar_moeda)
-        tabela["rendimento_bruto"] = tabela["rendimento_bruto"].map(formatar_moeda)
-        tabela["ir_estimado"] = tabela["ir_estimado"].map(formatar_moeda)
-        tabela["saldo_liquido"] = tabela["saldo_liquido"].map(formatar_moeda)
-        tabela["aliquota_ir"] = tabela["aliquota_ir"].map(lambda x: f"{x * 100:.1f}%")
-
-        st.dataframe(
-            tabela[
-                [
-                    "ano",
-                    "mes",
-                    "taxa_anual_pct",
-                    "taxa_mensal_pct",
-                    "saldo_bruto",
-                    "rendimento_bruto",
-                    "aliquota_ir",
-                    "ir_estimado",
-                    "saldo_liquido",
-                ]
-            ],
-            use_container_width=True,
-            hide_index=True
+        prazo_meses = st.slider(
+            "Prazo da simulação",
+            min_value=12,
+            max_value=60,
+            value=60,
+            step=12,
+            format="%d meses",
+            key="curva_prazo_meses",
         )
 
-def render_curve_investment_module(curva_df: pd.DataFrame):
-    st.markdown("### Simular investimento pela curva")
+    col3, col4 = st.columns(2)
 
-    st.info(
-        "Este módulo projeta um aporte único com base nos vértices da curva de juros. "
-        "A taxa anual de cada ano é convertida para taxa mensal equivalente, permitindo "
-        "estimar valor bruto, imposto de renda e valor líquido ao longo do tempo."
-    )
+    with col3:
+        produto_tributavel = st.selectbox(
+            "Classificação fiscal da simulação individual",
+            ["Tributável", "Isento"],
+            key="curva_classificacao_fiscal",
+        ) == "Tributável"
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        valor_inicial = st.number_input(
-            "Valor inicial investido",
+    with col4:
+        percentual_cdi = st.number_input(
+            "Rentabilidade estimada da simulação individual (% da curva/CDI)",
             min_value=0.0,
-            value=100000.0,
-            step=1000.0,
-            key="curva_valor_inicial"
+            max_value=250.0,
+            value=100.0,
+            step=1.0,
+            key="curva_percentual_cdi",
         )
-
-    with col2:
-        produto_tributavel = st.selectbox(
-            "Classificação fiscal",
-            ["Tributável", "Isento"],
-            key="curva_classificacao_fiscal"
-        ) == "Tributável"
 
     resultado_df, metricas = simular_investimento_pela_curva(
         valor_inicial=valor_inicial,
         curva_df=curva_df,
-        produto_tributavel=produto_tributavel
+        produto_tributavel=produto_tributavel,
+        prazo_meses=prazo_meses,
+        percentual_cdi=percentual_cdi,
     )
 
     if resultado_df.empty:
         st.warning("Não foi possível simular o investimento pela curva.")
         return
 
+    st.markdown("#### Resultado da simulação individual")
+
     col_a, col_b, col_c, col_d = st.columns(4)
 
     col_a.metric(
         "Valor bruto final",
-        formatar_moeda(metricas["valor_bruto_final"])
+        formatar_moeda(metricas["valor_bruto_final"]),
     )
 
     col_b.metric(
         "Valor líquido final",
-        formatar_moeda(metricas["valor_liquido_final"])
+        formatar_moeda(metricas["valor_liquido_final"]),
     )
 
     col_c.metric(
         "IR estimado",
-        formatar_moeda(metricas["ir_total"])
+        formatar_moeda(metricas["ir_total"]),
     )
 
     col_d.metric(
         "Retorno líquido acumulado",
-        formatar_pct(metricas["retorno_liquido"])
+        formatar_pct(metricas["retorno_liquido"]),
     )
 
     col_e, col_f, col_g = st.columns(3)
 
     col_e.metric(
         "Retorno bruto acumulado",
-        formatar_pct(metricas["retorno_bruto"])
+        formatar_pct(metricas["retorno_bruto"]),
     )
 
     col_f.metric(
         "Retorno líquido ao mês",
-        formatar_pct(metricas["retorno_mensal_liquido"])
+        formatar_pct(metricas["retorno_mensal_liquido"]),
     )
 
     col_g.metric(
         "Retorno líquido ao ano",
-        formatar_pct(metricas["retorno_anual_liquido"])
+        formatar_pct(metricas["retorno_anual_liquido"]),
     )
 
     st.plotly_chart(
         grafico_investimento_pela_curva(resultado_df),
-        use_container_width=True
+        width="stretch",
     )
 
     with st.expander("Ver tabela mensal da simulação pela curva"):
@@ -379,6 +369,128 @@ def render_curve_investment_module(curva_df: pd.DataFrame):
                     "saldo_liquido",
                 ]
             ],
-            use_container_width=True,
-            hide_index=True
+            width="stretch",
+            hide_index=True,
+        )
+
+    st.markdown("#### Comparativo de produtos pela curva")
+
+    st.caption(
+        "Comparação estimada entre produtos usando a mesma curva de juros, "
+        "com diferenças de tributação, percentual da curva/CDI e custos anuais."
+    )
+
+    colp1, colp2 = st.columns(2)
+
+    with colp1:
+        cdb_percentual = st.number_input(
+            "CDB / LC (% da curva/CDI)",
+            min_value=0.0,
+            max_value=250.0,
+            value=105.0,
+            step=1.0,
+            key="curva_cdb_percentual",
+        )
+
+        lci_lca_percentual = st.number_input(
+            "LCI / LCA (% da curva/CDI)",
+            min_value=0.0,
+            max_value=250.0,
+            value=93.0,
+            step=1.0,
+            key="curva_lci_lca_percentual",
+        )
+
+    with colp2:
+        tesouro_percentual = st.number_input(
+            "Tesouro Selic (% da curva/CDI)",
+            min_value=0.0,
+            max_value=250.0,
+            value=100.0,
+            step=1.0,
+            key="curva_tesouro_percentual",
+        )
+
+        tesouro_custo_anual = st.number_input(
+            "Custo anual Tesouro Selic (%)",
+            min_value=0.0,
+            max_value=5.0,
+            value=0.20,
+            step=0.05,
+            key="curva_tesouro_custo_anual",
+        )
+
+    colp3, colp4 = st.columns(2)
+
+    with colp3:
+        fundo_percentual = st.number_input(
+            "Fundo DI (% da curva/CDI)",
+            min_value=0.0,
+            max_value=250.0,
+            value=100.0,
+            step=1.0,
+            key="curva_fundo_percentual",
+        )
+
+    with colp4:
+        fundo_taxa_anual = st.number_input(
+            "Taxa de administração Fundo DI (%)",
+            min_value=0.0,
+            max_value=5.0,
+            value=0.50,
+            step=0.05,
+            key="curva_fundo_taxa_anual",
+        )
+
+    comparativo_df = simular_produtos_pela_curva(
+        valor_inicial=valor_inicial,
+        curva_df=curva_df,
+        prazo_meses=prazo_meses,
+        cdb_percentual=cdb_percentual,
+        lci_lca_percentual=lci_lca_percentual,
+        tesouro_percentual=tesouro_percentual,
+        tesouro_custo_anual=tesouro_custo_anual,
+        fundo_percentual=fundo_percentual,
+        fundo_taxa_anual=fundo_taxa_anual,
+    )
+
+    if not comparativo_df.empty:
+        comparativo_df = comparativo_df.sort_values(
+            "Valor líquido final",
+            ascending=False,
+        )
+
+        vencedor = comparativo_df.iloc[0]["Produto"]
+
+        st.success(
+            f"Na projeção pela curva, o produto com maior valor líquido final foi: {vencedor}."
+        )
+
+        tabela_comparativa = comparativo_df.copy()
+        tabela_comparativa["% da curva/CDI"] = tabela_comparativa["% da curva/CDI"].map(
+            lambda x: f"{x:.2f}%"
+        )
+        tabela_comparativa["Custo anual"] = tabela_comparativa["Custo anual"].map(
+            lambda x: f"{x:.2f}%"
+        )
+        tabela_comparativa["Valor bruto final"] = tabela_comparativa[
+            "Valor bruto final"
+        ].map(formatar_moeda)
+        tabela_comparativa["IR estimado"] = tabela_comparativa["IR estimado"].map(
+            formatar_moeda
+        )
+        tabela_comparativa["Valor líquido final"] = tabela_comparativa[
+            "Valor líquido final"
+        ].map(formatar_moeda)
+        tabela_comparativa["Retorno líquido"] = tabela_comparativa[
+            "Retorno líquido"
+        ].map(formatar_pct)
+        tabela_comparativa["Retorno líquido ao ano"] = tabela_comparativa[
+            "Retorno líquido ao ano"
+        ].map(formatar_pct)
+
+        st.dataframe(
+            tabela_comparativa,
+            width="stretch",
+            hide_index=True,
         )

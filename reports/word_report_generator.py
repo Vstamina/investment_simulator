@@ -619,7 +619,6 @@ def generate_word_report(
     monthly_df=None,
     consultive_analysis=None,
     market_intelligence=None,
-    report_options=None,
     include_dividend_scenario=False,
     monthly_dividends=0.0,
     same_payer_dividends=True,
@@ -628,7 +627,10 @@ def generate_word_report(
     estimated_monthly_dividend_ir=0.0,
     integrated_tax_scenario=None,
     estimated_annual_dividend_ir=0.0,
+    report_options=None,
+    panorama_mercado=None,
 ):
+
     if report_options is None:
         report_options = {
             "visao_geral": True,
@@ -666,6 +668,7 @@ def generate_word_report(
     section.bottom_margin = Inches(0.65)
     section.left_margin = Inches(0.65)
     section.right_margin = Inches(0.65)
+
 
     # =========================================================
     # FAIXA SUPERIOR
