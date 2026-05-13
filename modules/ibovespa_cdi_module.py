@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from io import BytesIO
 from docx import Document
 from datetime import date
+from docx.shared import Inches
 
 
 # ============================================================
@@ -319,6 +320,114 @@ def detectar_ciclos_relevantes(
 
     return ciclos_df
 
+# ============================================================
+# 3.1 JANELAS ESTRATÉGICAS OBRIGATÓRIAS
+# ============================================================
+
+def adicionar_janelas_estrategicas(df: pd.DataFrame, ciclos_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adiciona janelas estratégicas relevantes para leitura consultiva,
+    mesmo quando elas não aparecem entre os maiores ciclos matemáticos.
+
+    Janela inicial: Covid-19.
+    """
+
+    if df.empty:
+        return ciclos_df
+
+    base = df.copy()
+    base = base.sort_values("data")
+
+    janelas = []
+
+    inicio_covid = pd.Timestamp("2020-02-01")
+    fim_covid_busca = pd.Timestamp("2020-04-30")
+
+    periodo_contem_covid = (
+        base["data"].min() <= inicio_covid
+        and base["data"].max() >= fim_covid_busca
+    )
+
+    if periodo_contem_covid:
+        janela_fundo = base[
+            (base["data"] >= inicio_covid)
+            & (base["data"] <= fim_covid_busca)
+        ].copy()
+
+        if not janela_fundo.empty:
+            fundo = janela_fundo.loc[janela_fundo["ibovespa"].idxmin()]
+
+            data_entrada = fundo["data"]
+            ibov_entrada = fundo["ibovespa"]
+
+            saida = base.iloc[-1]
+            data_saida = saida["data"]
+            ibov_saida = saida["ibovespa"]
+
+            janela = base[
+                (base["data"] >= data_entrada)
+                & (base["data"] <= data_saida)
+            ].copy()
+
+            if not janela.empty:
+                retorno_ibov = ibov_saida / ibov_entrada - 1
+                retorno_cdi = janela["indice_cdi"].iloc[-1] / janela["indice_cdi"].iloc[0] - 1
+
+                vencedor = "Ibovespa" if retorno_ibov > retorno_cdi else "CDI"
+
+                janelas.append(
+                    {
+                        "entrada": data_entrada.date(),
+                        "saida": data_saida.date(),
+                        "ibov_entrada": ibov_entrada,
+                        "ibov_saida": ibov_saida,
+                        "retorno_ibov": retorno_ibov,
+                        "retorno_cdi": retorno_cdi,
+                        "diferenca": retorno_ibov - retorno_cdi,
+                        "vencedor": vencedor,
+                        "tipo": "Janela estratégica",
+                        "contexto": "Covid-19, circuit breakers, choque global de risco e recuperação posterior",
+                        "leitura": (
+                            "Janela relevante para demonstrar como entradas em momentos de estresse "
+                            "podem alterar fortemente o retorno relativo do Ibovespa frente ao CDI, "
+                            "desde que exista horizonte, tolerância à volatilidade e aderência ao perfil."
+                        ),
+                    }
+                )
+
+    if ciclos_df is None or ciclos_df.empty:
+        if janelas:
+            return pd.DataFrame(janelas)
+        return pd.DataFrame()
+
+    ciclos_base = ciclos_df.copy()
+
+    if "tipo" not in ciclos_base.columns:
+        ciclos_base["tipo"] = "Ciclo detectado"
+
+    if "contexto" not in ciclos_base.columns:
+        ciclos_base["contexto"] = ""
+
+    if "leitura" not in ciclos_base.columns:
+        ciclos_base["leitura"] = ""
+
+    if not janelas:
+        return ciclos_base
+
+    janelas_df = pd.DataFrame(janelas)
+
+    ciclos_final = pd.concat(
+        [ciclos_base, janelas_df],
+        ignore_index=True
+    )
+
+    ciclos_final = ciclos_final.drop_duplicates(
+        subset=["entrada", "saida"],
+        keep="last"
+    )
+
+    return ciclos_final
+
 
 # ============================================================
 # 4. GRÁFICOS
@@ -391,6 +500,66 @@ def grafico_ibovespa_cdi(df: pd.DataFrame) -> go.Figure:
         bordercolor="#00E676",
         borderwidth=1
     )
+
+    eventos_historicos = [
+        {
+            "data": "2002-10-01",
+            "titulo": "2002",
+            "texto": "Risco Brasil, câmbio e eleição presidencial"
+        },
+        {
+            "data": "2008-09-15",
+            "titulo": "2008",
+            "texto": "Crise financeira global"
+        },
+        {
+            "data": "2016-08-31",
+            "titulo": "2015/16",
+            "texto": "Recessão brasileira e crise política/fiscal"
+        },
+        {
+            "data": "2020-03-23",
+            "titulo": "Covid",
+            "texto": "Pandemia, circuit breakers e choque global de risco"
+        },
+        {
+            "data": "2022-03-01",
+            "titulo": "2021/22",
+            "texto": "Inflação, alta da Selic e guerra na Ucrânia"
+        },
+        {
+            "data": "2024-01-01",
+            "titulo": "2023/26",
+            "texto": "Juros, fiscal, commodities e fluxo estrangeiro"
+        },
+    ]
+
+    data_min = base["data"].min()
+    data_max = base["data"].max()
+    y_ref = max(valor_final_ibov, valor_final_cdi)
+
+    for evento in eventos_historicos:
+        data_evento = pd.Timestamp(evento["data"])
+
+        if data_min <= data_evento <= data_max:
+            fig.add_vline(
+                x=data_evento,
+                line_width=1,
+                line_dash="dot",
+                line_color="rgba(255,255,255,0.35)"
+            )
+
+            fig.add_annotation(
+                x=data_evento,
+                y=y_ref,
+                text=f"{evento['titulo']}<br>{evento['texto']}",
+                showarrow=False,
+                yshift=45,
+                font=dict(size=10, color="#EAEAEA"),
+                bgcolor="rgba(0,0,0,0.55)",
+                bordercolor="rgba(255,255,255,0.25)",
+                borderwidth=1
+            )
 
     fig.update_layout(
         title={
@@ -601,108 +770,31 @@ Para o cliente conservador, o CDI permanece como referência de segurança e pre
 
     return texto.strip()
 
+def fig_to_png_bytes(fig: go.Figure) -> BytesIO:
+    """
+    Converte um gráfico Plotly em imagem PNG para inserir no Word.
+    Requer kaleido instalado.
+    """
 
-def gerar_word_relatorio(texto: str, metricas: dict, ciclos_df: pd.DataFrame) -> BytesIO:
-    doc = Document()
-
-    doc.add_heading("Relatório Foresight | Ibovespa x CDI", level=1)
-
-    doc.add_heading("Resumo Executivo", level=2)
-
-    for paragrafo in texto.split("\n\n"):
-        doc.add_paragraph(paragrafo.strip())
-
-    doc.add_heading("Métricas Comparativas", level=2)
-
-    tabela = doc.add_table(rows=1, cols=3)
-    tabela.style = "Table Grid"
-
-    hdr = tabela.rows[0].cells
-    hdr[0].text = "Métrica"
-    hdr[1].text = "Ibovespa"
-    hdr[2].text = "CDI"
-
-    linhas = [
-        ("Retorno acumulado", formatar_pct(metricas["retorno_ibov"]), formatar_pct(metricas["retorno_cdi"])),
-        ("Retorno anualizado", formatar_pct(metricas["retorno_anual_ibov"]), formatar_pct(metricas["retorno_anual_cdi"])),
-        ("Retorno mensal médio", formatar_pct(metricas["retorno_mensal_ibov"]), formatar_pct(metricas["retorno_mensal_cdi"])),
-        ("Volatilidade anualizada", formatar_pct(metricas["volatilidade_ibov"]), "Não aplicável no modelo simplificado"),
-        ("Maior drawdown", formatar_pct(metricas["max_drawdown_ibov"]), "Não aplicável no modelo simplificado"),
-    ]
-
-    for metrica, ibov, cdi in linhas:
-        cells = tabela.add_row().cells
-        cells[0].text = metrica
-        cells[1].text = ibov
-        cells[2].text = cdi
-
-    if ciclos_df is not None and not ciclos_df.empty:
-        doc.add_heading("Ciclos Históricos Relevantes", level=2)
-
-        tabela_ciclos = doc.add_table(rows=1, cols=7)
-        tabela_ciclos.style = "Table Grid"
-
-        hdr = tabela_ciclos.rows[0].cells
-        hdr[0].text = "Entrada"
-        hdr[1].text = "Ibovespa Entrada"
-        hdr[2].text = "Saída"
-        hdr[3].text = "Ibovespa Saída"
-        hdr[4].text = "Ibovespa"
-        hdr[5].text = "CDI"
-        hdr[6].text = "Vencedor"
-
-        for _, row in ciclos_df.iterrows():
-            cells = tabela_ciclos.add_row().cells
-            cells[0].text = str(row["entrada"])
-            cells[1].text = formatar_numero(row["ibov_entrada"])
-            cells[2].text = str(row["saida"])
-            cells[3].text = formatar_numero(row["ibov_saida"])
-            cells[4].text = formatar_pct(row["retorno_ibov"])
-            cells[5].text = formatar_pct(row["retorno_cdi"])
-            cells[6].text = str(row["vencedor"])
-    
-        doc.add_heading("Ciclos macro para leitura consultiva", level=2)
-
-    doc.add_paragraph(
-        "Os 8 ciclos macro mais úteis para leitura consultiva seriam:"
+    image_bytes = fig.to_image(
+        format="png",
+        width=1200,
+        height=650,
+        scale=2
     )
 
-    ciclos_macro_word = [
-        ("1968–1971", "Ciclo inicial de forte valorização da bolsa brasileira."),
-        ("1971–1975", "Estouro da bolha e forte correção."),
-        ("1980s/início dos 1990s", "Inflação alta, planos econômicos e instabilidade monetária."),
-        ("1994–1997", "Plano Real, estabilização e reprecificação de ativos."),
-        ("1998–2002", "Crises externa, câmbio, risco Brasil e eleição de 2002."),
-        ("2003–2008", "Boom de commodities, China, crédito e forte ciclo de alta."),
-        ("2008–2016", "Crise financeira global, recuperação parcial, recessão brasileira e crise política/fiscal."),
-        ("2020–2026", "Covid, Selic baixa, inflação, alta de juros, commodities, fiscal e recuperação posterior."),
-    ]
-
-    tabela_macro = doc.add_table(rows=1, cols=2)
-    tabela_macro.style = "Table Grid"
-
-    hdr = tabela_macro.rows[0].cells
-    hdr[0].text = "Ciclo"
-    hdr[1].text = "Leitura macroeconômica"
-
-    for ciclo, leitura in ciclos_macro_word:
-        cells = tabela_macro.add_row().cells
-        cells[0].text = ciclo
-        cells[1].text = leitura
-
-    buffer = BytesIO()
-    doc.save(buffer)
+    buffer = BytesIO(image_bytes)
     buffer.seek(0)
 
     return buffer
 
-
-# ============================================================
+    # ============================================================
 # 6. INTERFACE STREAMLIT DO MÓDULO
 # ============================================================
 
 def render_ibovespa_cdi_module():
-    st.markdown("## Radar Ibovespa x CDI")
+    st.markdown("### Painel analítico Ibovespa x CDI")
+
     st.caption(
         "Comparação histórica entre bolsa brasileira e CDI, com leitura de ciclos, risco e relatório consultivo."
     )
@@ -727,8 +819,8 @@ def render_ibovespa_cdi_module():
         numero_ciclos = st.slider(
             "Máximo de ciclos relevantes",
             min_value=1,
-            max_value=8,
-            value=4,
+            max_value=15,
+            value=8,
             key="ibov_cdi_numero_ciclos"
         )
 
@@ -799,6 +891,12 @@ def render_ibovespa_cdi_module():
         meses_minimos=meses_minimos
     )
 
+    ciclos_df = adicionar_janelas_estrategicas(df, ciclos_df)
+
+    # ============================================================
+    # PAINEL DE MÉTRICAS
+    # ============================================================
+
     st.markdown("### Painel comparativo")
 
     col1, col2, col3, col4 = st.columns(4)
@@ -845,7 +943,37 @@ def render_ibovespa_cdi_module():
         formatar_pct(metricas["max_drawdown_ibov"])
     )
 
-    st.markdown("### Ciclos relevantes identificados")
+    # ============================================================
+    # GRÁFICOS
+    # ============================================================
+
+    st.markdown("### Evolução comparativa")
+
+    st.info(
+        "Leitura visual comparativa entre Ibovespa e CDI. "
+        "O gráfico base 100 mostra como R$ 100 evoluiriam em cada alternativa ao longo do tempo."
+    )
+
+    st.plotly_chart(
+        grafico_ibovespa_cdi(df),
+        use_container_width=True
+    )
+
+    st.plotly_chart(
+        grafico_retorno_percentual(df),
+        use_container_width=True
+    )
+
+    st.plotly_chart(
+        grafico_diferenca(df),
+        use_container_width=True
+    )
+
+    # ============================================================
+    # CICLOS RELEVANTES
+    # ============================================================
+
+    st.markdown("### Ciclos relevantes e janelas estratégicas")
 
     if ciclos_df.empty:
         st.info(
@@ -854,28 +982,67 @@ def render_ibovespa_cdi_module():
         )
     else:
         ciclos_view = ciclos_df.copy()
+
+        if "tipo" not in ciclos_view.columns:
+            ciclos_view["tipo"] = "Ciclo detectado"
+
+        if "contexto" not in ciclos_view.columns:
+            ciclos_view["contexto"] = ""
+
+        if "leitura" not in ciclos_view.columns:
+            ciclos_view["leitura"] = ""
+
         ciclos_view["ibov_entrada"] = ciclos_view["ibov_entrada"].apply(formatar_numero)
         ciclos_view["ibov_saida"] = ciclos_view["ibov_saida"].apply(formatar_numero)
         ciclos_view["retorno_ibov"] = ciclos_view["retorno_ibov"].apply(formatar_pct)
         ciclos_view["retorno_cdi"] = ciclos_view["retorno_cdi"].apply(formatar_pct)
         ciclos_view["diferenca"] = ciclos_view["diferenca"].apply(formatar_pct)
 
-        ciclos_view = ciclos_view.rename(columns={
-            "entrada": "Entrada",
-            "saida": "Saída",
-            "ibov_entrada": "Ibovespa na entrada",
-            "ibov_saida": "Ibovespa na saída",
-            "retorno_ibov": "Retorno Ibovespa",
-            "retorno_cdi": "Retorno CDI",
-            "diferenca": "Diferença",
-            "vencedor": "Vencedor"
-        })
+        ciclos_view = ciclos_view.rename(
+            columns={
+                "entrada": "Entrada",
+                "saida": "Saída",
+                "ibov_entrada": "Ibovespa na entrada",
+                "ibov_saida": "Ibovespa na saída",
+                "retorno_ibov": "Retorno Ibovespa",
+                "retorno_cdi": "Retorno CDI",
+                "diferenca": "Diferença",
+                "vencedor": "Vencedor",
+                "tipo": "Tipo",
+                "contexto": "Contexto",
+                "leitura": "Leitura consultiva",
+            }
+        )
+
+        colunas_exibir = [
+            "Tipo",
+            "Entrada",
+            "Saída",
+            "Ibovespa na entrada",
+            "Ibovespa na saída",
+            "Retorno Ibovespa",
+            "Retorno CDI",
+            "Diferença",
+            "Vencedor",
+            "Contexto",
+            "Leitura consultiva",
+        ]
+
+        colunas_exibir = [
+            coluna for coluna in colunas_exibir
+            if coluna in ciclos_view.columns
+        ]
 
         st.dataframe(
-            ciclos_view,
+            ciclos_view[colunas_exibir],
             use_container_width=True,
             hide_index=True
         )
+
+    # ============================================================
+    # CICLOS MACRO
+    # ============================================================
+
     st.markdown("### Ciclos macro para leitura consultiva")
 
     st.info(
@@ -933,29 +1100,11 @@ def render_ibovespa_cdi_module():
         use_container_width=True,
         hide_index=True
     )
-    
-    st.markdown("### Evolução comparativa")
 
-    st.info(
-        "Leitura visual comparativa entre Ibovespa e CDI. "
-        "O gráfico base 100 mostra como R$ 100 evoluiriam em cada alternativa ao longo do tempo."
-    )
+    # ============================================================
+    # RELATÓRIO FORESIGHT
+    # ============================================================
 
-    st.plotly_chart(
-        grafico_ibovespa_cdi(df),
-        use_container_width=True
-    )
-
-    st.plotly_chart(
-        grafico_retorno_percentual(df),
-        use_container_width=True
-    )
-
-    st.plotly_chart(
-        grafico_diferenca(df),
-        use_container_width=True
-    )
-    
     st.markdown("### Relatório Foresight")
 
     relatorio = gerar_texto_foresight(metricas, ciclos_df)
@@ -966,7 +1115,8 @@ def render_ibovespa_cdi_module():
     arquivo_word = gerar_word_relatorio(
         texto=relatorio,
         metricas=metricas,
-        ciclos_df=ciclos_df
+        ciclos_df=ciclos_df,
+        df=df
     )
 
     st.download_button(
@@ -984,3 +1134,235 @@ def render_ibovespa_cdi_module():
             A interpretação deve considerar perfil do investidor, horizonte, liquidez, adequação regulatória, tolerância a risco e composição global da carteira.
             """
         )
+
+def gerar_word_relatorio(
+    texto: str,
+    metricas: dict,
+    ciclos_df: pd.DataFrame,
+    df: pd.DataFrame
+) -> BytesIO:
+
+    doc = Document()
+
+    doc.add_heading("Relatório Foresight | Ibovespa x CDI", level=1)
+
+    doc.add_paragraph(
+        "Relatório consultivo gerado a partir da comparação histórica entre "
+        "Ibovespa e CDI, com leitura de retorno, risco, ciclos de mercado "
+        "e interpretação estratégica."
+    )
+
+    # ============================================================
+    # RESUMO EXECUTIVO
+    # ============================================================
+
+    doc.add_heading("Resumo Executivo", level=2)
+
+    for paragrafo in texto.split("\n\n"):
+        if paragrafo.strip():
+            doc.add_paragraph(paragrafo.strip())
+
+    # ============================================================
+    # MÉTRICAS COMPARATIVAS
+    # ============================================================
+
+    doc.add_heading("Métricas Comparativas", level=2)
+
+    tabela = doc.add_table(rows=1, cols=3)
+    tabela.style = "Table Grid"
+
+    hdr = tabela.rows[0].cells
+    hdr[0].text = "Métrica"
+    hdr[1].text = "Ibovespa"
+    hdr[2].text = "CDI"
+
+    linhas = [
+        (
+            "Retorno acumulado",
+            formatar_pct(metricas["retorno_ibov"]),
+            formatar_pct(metricas["retorno_cdi"])
+        ),
+        (
+            "Retorno anualizado",
+            formatar_pct(metricas["retorno_anual_ibov"]),
+            formatar_pct(metricas["retorno_anual_cdi"])
+        ),
+        (
+            "Retorno mensal médio",
+            formatar_pct(metricas["retorno_mensal_ibov"]),
+            formatar_pct(metricas["retorno_mensal_cdi"])
+        ),
+        (
+            "Volatilidade anualizada",
+            formatar_pct(metricas["volatilidade_ibov"]),
+            "Não aplicável no modelo simplificado"
+        ),
+        (
+            "Maior drawdown",
+            formatar_pct(metricas["max_drawdown_ibov"]),
+            "Não aplicável no modelo simplificado"
+        ),
+        (
+            "Vencedor no período",
+            metricas["vencedor"],
+            metricas["vencedor"]
+        ),
+    ]
+
+    for metrica, ibov, cdi in linhas:
+        cells = tabela.add_row().cells
+        cells[0].text = metrica
+        cells[1].text = ibov
+        cells[2].text = cdi
+
+    # ============================================================
+    # CICLOS RELEVANTES E JANELAS ESTRATÉGICAS
+    # ============================================================
+
+    if ciclos_df is not None and not ciclos_df.empty:
+        doc.add_heading("Ciclos relevantes e janelas estratégicas", level=2)
+
+        tabela_ciclos = doc.add_table(rows=1, cols=9)
+        tabela_ciclos.style = "Table Grid"
+
+        hdr = tabela_ciclos.rows[0].cells
+        hdr[0].text = "Tipo"
+        hdr[1].text = "Entrada"
+        hdr[2].text = "Saída"
+        hdr[3].text = "Ibovespa entrada"
+        hdr[4].text = "Ibovespa saída"
+        hdr[5].text = "Retorno Ibovespa"
+        hdr[6].text = "Retorno CDI"
+        hdr[7].text = "Vencedor"
+        hdr[8].text = "Contexto"
+
+        ciclos_word = ciclos_df.copy()
+
+        if "tipo" not in ciclos_word.columns:
+            ciclos_word["tipo"] = "Ciclo detectado"
+
+        if "contexto" not in ciclos_word.columns:
+            ciclos_word["contexto"] = ""
+
+        for _, row in ciclos_word.iterrows():
+            cells = tabela_ciclos.add_row().cells
+            cells[0].text = str(row.get("tipo", "Ciclo detectado"))
+            cells[1].text = str(row["entrada"])
+            cells[2].text = str(row["saida"])
+            cells[3].text = formatar_numero(row["ibov_entrada"])
+            cells[4].text = formatar_numero(row["ibov_saida"])
+            cells[5].text = formatar_pct(row["retorno_ibov"])
+            cells[6].text = formatar_pct(row["retorno_cdi"])
+            cells[7].text = str(row["vencedor"])
+            cells[8].text = str(row.get("contexto", ""))
+
+    # ============================================================
+    # CICLOS MACRO PARA LEITURA CONSULTIVA
+    # ============================================================
+
+    doc.add_heading("Ciclos macro para leitura consultiva", level=2)
+
+    doc.add_paragraph(
+        "Os 8 ciclos macro mais úteis para leitura consultiva seriam:"
+    )
+
+    ciclos_macro_word = [
+        ("1968–1971", "Ciclo inicial de forte valorização da bolsa brasileira."),
+        ("1971–1975", "Estouro da bolha e forte correção."),
+        ("1980s/início dos 1990s", "Inflação alta, planos econômicos e instabilidade monetária."),
+        ("1994–1997", "Plano Real, estabilização e reprecificação de ativos."),
+        ("1998–2002", "Crises externa, câmbio, risco Brasil e eleição de 2002."),
+        ("2003–2008", "Boom de commodities, China, crédito e forte ciclo de alta."),
+        ("2008–2016", "Crise financeira global, recuperação parcial, recessão brasileira e crise política/fiscal."),
+        ("2020–2026", "Covid, Selic baixa, inflação, alta de juros, commodities, fiscal e recuperação posterior."),
+    ]
+
+    tabela_macro = doc.add_table(rows=1, cols=2)
+    tabela_macro.style = "Table Grid"
+
+    hdr = tabela_macro.rows[0].cells
+    hdr[0].text = "Ciclo"
+    hdr[1].text = "Leitura macroeconômica"
+
+    for ciclo, leitura in ciclos_macro_word:
+        cells = tabela_macro.add_row().cells
+        cells[0].text = ciclo
+        cells[1].text = leitura
+
+    # ============================================================
+    # GRÁFICOS DO RADAR
+    # ============================================================
+
+    doc.add_heading("Gráficos comparativos", level=2)
+
+    try:
+        fig_base_100 = grafico_ibovespa_cdi(df)
+        imagem_base_100 = fig_to_png_bytes(fig_base_100)
+
+        doc.add_paragraph(
+            "Evolução comparativa em base 100: mostra como R$ 100 evoluiriam "
+            "em cada alternativa ao longo do período analisado."
+        )
+
+        doc.add_picture(imagem_base_100, width=Inches(6.5))
+
+    except Exception as error:
+        doc.add_paragraph(
+            f"Não foi possível inserir o gráfico Ibovespa x CDI no relatório. Erro: {error}"
+        )
+
+    try:
+        fig_retorno = grafico_retorno_percentual(df)
+        imagem_retorno = fig_to_png_bytes(fig_retorno)
+
+        doc.add_paragraph(
+            "Retorno acumulado percentual: compara o desempenho acumulado do Ibovespa "
+            "e do CDI ao longo do período."
+        )
+
+        doc.add_picture(imagem_retorno, width=Inches(6.5))
+
+    except Exception as error:
+        doc.add_paragraph(
+            f"Não foi possível inserir o gráfico de retorno percentual no relatório. Erro: {error}"
+        )
+
+    try:
+        fig_diferenca = grafico_diferenca(df)
+        imagem_diferenca = fig_to_png_bytes(fig_diferenca)
+
+        doc.add_paragraph(
+            "Diferença acumulada entre Ibovespa e CDI: evidencia os períodos em que "
+            "a bolsa ampliou ou reduziu vantagem relativa frente ao CDI."
+        )
+
+        doc.add_picture(imagem_diferenca, width=Inches(6.5))
+
+    except Exception as error:
+        doc.add_paragraph(
+            f"Não foi possível inserir o gráfico de diferença no relatório. Erro: {error}"
+        )
+
+    # ============================================================
+    # AVISO METODOLÓGICO
+    # ============================================================
+
+    doc.add_heading("Aviso metodológico", level=2)
+
+    doc.add_paragraph(
+        "Esta análise tem finalidade exclusivamente educacional, analítica e consultiva. "
+        "A comparação histórica entre Ibovespa e CDI não constitui recomendação individualizada "
+        "de investimento, promessa de rentabilidade ou garantia de desempenho futuro. "
+        "A decisão de investimento deve considerar perfil do cliente, liquidez, horizonte, "
+        "objetivos patrimoniais, tolerância a risco e adequação regulatória."
+    )
+
+    # ============================================================
+    # SALVAR DOCUMENTO
+    # ============================================================
+
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+
+    return buffer
