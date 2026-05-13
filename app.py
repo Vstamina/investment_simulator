@@ -1735,54 +1735,6 @@ if use_market_intelligence:
     update_market_data = st.button(
         "Atualizar inteligência de mercado",
         type="primary",
-        key="btn_atualizar_inteligencia_mercado_principal"
-    )
-
-    if update_market_data:
-        try:
-            with st.spinner("Buscando dados públicos de mercado..."):
-                market_intelligence = generate_market_intelligence()
-                st.session_state["market_intelligence"] = market_intelligence
-
-            st.success("Inteligência de mercado carregada com sucesso.")
-
-        except Exception as e:
-            st.warning(
-                f"Não foi possível carregar a inteligência de mercado: {e}"
-            )
-
-    market_intelligence = st.session_state.get("market_intelligence")
-
-    if market_intelligence:
-        bacen_df = market_intelligence.get("bacen_df")
-        focus_df = market_intelligence.get("focus_df")
-        curve_df = market_intelligence.get("curve_df")
-        curve_shape = market_intelligence.get("curve_shape")
-        market_reading = market_intelligence.get("reading")
-
-
-        # =========================================================
-        # DADOS BACEN
-        # =========================================================
-
-# =========================================================
-# INTELIGÊNCIA DE MERCADO E FORESIGHT
-# =========================================================
-
-if use_market_intelligence:
-    st.markdown(
-        '<div class="section-title">Inteligência de Mercado e Foresight</div>',
-        unsafe_allow_html=True
-    )
-
-    st.info(
-        "Módulo experimental ativado. Esta camada busca dados públicos do Bacen/Focus "
-        "e gera uma leitura consultiva inicial, sem alterar os cálculos da simulação CDI."
-    )
-
-    update_market_data = st.button(
-        "Atualizar inteligência de mercado",
-        type="primary",
         key="btn_atualizar_inteligencia_mercado_2"
     )
 
