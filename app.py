@@ -8,6 +8,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 
+def formatar_pp(valor):
+    return f"{valor:.2f}".replace(".", ",") + " p.p."
 
 # =========================================================
 # FORMATADORES
@@ -1707,11 +1709,211 @@ if use_market_intelligence:
             if curve_df is None or curve_df.empty:
                 st.warning("Curva simplificada de juros não disponível nesta execução.")
             else:
-                st.dataframe(
-                    curve_df,
-                    width="stretch",
-                    hide_index=True
+                curva_visual_df = curve_df.copy()
+
+                # ---------------------------------------------------------
+                # Padronização segura das colunas
+                # ---------------------------------------------------------
+
+                coluna_vertice = "Vértice"
+                coluna_taxa = "Taxa Selic Esperada (%)"
+
+                if coluna_vertice not in curva_visual_df.columns:
+                    coluna_vertice = curva_visual_df.columns[0]
+
+                if coluna_taxa not in curva_visual_df.columns:
+                    possiveis_taxas = [
+                        coluna for coluna in curva_visual_df.columns
+                        if "taxa" in coluna.lower() or "selic" in coluna.lower()
+                    ]
+
+                    if possiveis_taxas:
+                        coluna_taxa = possiveis_taxas[0]
+
+                curva_visual_df[coluna_taxa] = pd.to_numeric(
+                    curva_visual_df[coluna_taxa],
+                    errors="coerce"
                 )
+
+                curva_visual_df = curva_visual_df.dropna(subset=[coluna_taxa]).copy()
+
+                # ---------------------------------------------------------
+                # Selic atual a partir dos dados Bacen
+                # ---------------------------------------------------------
+
+                selic_atual = None
+
+                try:
+                    if bacen_df is not None and not bacen_df.empty:
+                        bacen_temp = bacen_df.copy()
+
+                        if "Indicador" in bacen_temp.columns and "Valor" in bacen_temp.columns:
+                            linha_selic = bacen_temp[
+                                bacen_temp["Indicador"].astype(str).str.contains(
+                                    "Selic",
+                                    case=False,
+                                    na=False
+                                )
+                            ]
+
+                            if not linha_selic.empty:
+                                selic_atual = float(linha_selic["Valor"].iloc[0])
+                            else:
+                                selic_atual = float(bacen_temp["Valor"].iloc[0])
+
+                except Exception:
+                    selic_atual = None
+
+                if selic_atual is None and not curva_visual_df.empty:
+                    selic_atual = float(curva_visual_df[coluna_taxa].iloc[0])
+
+                # ---------------------------------------------------------
+                # Cálculo da abertura/fechamento da curva
+                # ---------------------------------------------------------
+
+                primeira_taxa = float(curva_visual_df[coluna_taxa].iloc[0])
+                ultima_taxa = float(curva_visual_df[coluna_taxa].iloc[-1])
+
+                spread_ultimo_vertice = ultima_taxa - selic_atual
+
+                if spread_ultimo_vertice < -0.25:
+                    movimento_curva = "Fechamento da curva"
+                    classificacao_curva = "curva descendente"
+                    leitura_movimento = (
+                        "A curva está fechando em relação à Selic atual. Isso indica que as expectativas "
+                        "de mercado apontam para juros futuros abaixo da taxa corrente."
+                    )
+                elif spread_ultimo_vertice > 0.25:
+                    movimento_curva = "Abertura da curva"
+                    classificacao_curva = "curva ascendente"
+                    leitura_movimento = (
+                        "A curva está abrindo em relação à Selic atual. Isso indica que o mercado exige "
+                        "juros futuros acima da taxa corrente, normalmente associado a maior prêmio de prazo, "
+                        "risco fiscal, inflação esperada ou incerteza macroeconômica."
+                    )
+                else:
+                    movimento_curva = "Curva estável"
+                    classificacao_curva = "curva relativamente estável"
+                    leitura_movimento = (
+                        "A curva está próxima da Selic atual. Isso sugere estabilidade relativa nas expectativas "
+                        "de juros futuros, sem abertura ou fechamento expressivo no último vértice."
+                    )
+
+                st.caption(f"Classificação da curva: **{classificacao_curva}**")
+
+                # ---------------------------------------------------------
+                # Cards visuais da curva
+                # ---------------------------------------------------------
+
+                col_selic, col_v1, col_v2, col_mov = st.columns(4)
+
+                with col_selic:
+                    st.metric(
+                        "Selic atual",
+                        f"{selic_atual:.2f}%".replace(".", ",")
+                    )
+
+                vertices_futuros = curva_visual_df.copy()
+
+                if len(vertices_futuros) >= 1:
+                    vertice_1 = vertices_futuros.iloc[0]
+                    with col_v1:
+                        st.metric(
+                            str(vertice_1[coluna_vertice]),
+                            f"{float(vertice_1[coluna_taxa]):.2f}%".replace(".", ","),
+                            formatar_pp(float(vertice_1[coluna_taxa]) - selic_atual)
+                        )
+
+                if len(vertices_futuros) >= 2:
+                    vertice_2 = vertices_futuros.iloc[1]
+                    with col_v2:
+                        st.metric(
+                            str(vertice_2[coluna_vertice]),
+                            f"{float(vertice_2[coluna_taxa]):.2f}%".replace(".", ","),
+                            formatar_pp(float(vertice_2[coluna_taxa]) - selic_atual)
+                        )
+
+                with col_mov:
+                    st.metric(
+                        "Movimento",
+                        movimento_curva,
+                        formatar_pp(spread_ultimo_vertice)
+                    )
+
+                # ---------------------------------------------------------
+                # Leitura visual da curva
+                # ---------------------------------------------------------
+
+                st.markdown("##### Leitura da curva em relação à Selic atual")
+
+                spread_formatado = f"{spread_ultimo_vertice:.2f}".replace(".", ",")
+
+                st.write(
+                    f"A Selic atual foi utilizada como referência da curva. "
+                    f"O último vértice apresenta diferença de "
+                    f"{spread_formatado} ponto percentual em relação à taxa corrente, "
+                    f"caracterizando **{movimento_curva.lower()}**."
+                )
+
+                st.info(
+                    f"{leitura_movimento} "
+                    "Na prática, essa leitura ajuda a avaliar o equilíbrio entre liquidez, "
+                    "risco de reinvestimento e oportunidade de travar taxas em produtos com prazo maior."
+                )
+
+                # ---------------------------------------------------------
+                # Gráfico visual da curva
+                # ---------------------------------------------------------
+
+                fig_curva = go.Figure()
+
+                fig_curva.add_trace(
+                    go.Scatter(
+                        x=curva_visual_df[coluna_vertice].astype(str),
+                        y=curva_visual_df[coluna_taxa],
+                        mode="lines+markers",
+                        name="Curva esperada",
+                        line=dict(width=4),
+                        marker=dict(size=10)
+                    )
+                )
+
+                fig_curva.add_trace(
+                    go.Scatter(
+                        x=curva_visual_df[coluna_vertice].astype(str),
+                        y=[selic_atual] * len(curva_visual_df),
+                        mode="lines",
+                        name="Selic atual",
+                        line=dict(width=2, dash="dash")
+                    )
+                )
+
+                fig_curva.update_layout(
+                    title="Curva simplificada de juros",
+                    height=420,
+                    hovermode="x unified",
+                    xaxis_title="Vértice",
+                    yaxis_title="Taxa esperada (%)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    )
+                )
+
+                st.plotly_chart(
+                    fig_curva,
+                    width="stretch"
+                )
+
+
+                # ---------------------------------------------------------
+                # Tabela técnica da curva
+                # ---------------------------------------------------------
 
                 with st.expander("Ver tabela técnica da curva", expanded=False):
                     st.dataframe(
