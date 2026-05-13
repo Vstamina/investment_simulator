@@ -20,57 +20,80 @@ def carregar_ibovespa(data_inicio: str, data_fim: str) -> pd.DataFrame:
     """
     Carrega o histórico do Ibovespa pelo Yahoo Finance.
     Ticker: ^BVSP.
-
-    Esta versão trata o caso em que o yfinance retorna colunas em MultiIndex.
+    Inclui tratamento para MultiIndex e fallback por período.
     """
 
-    df = yf.download(
-        "^BVSP",
-        start=data_inicio,
-        end=data_fim,
-        progress=False,
-        auto_adjust=True
-    )
+    try:
+        df = yf.download(
+            "^BVSP",
+            start=data_inicio,
+            end=data_fim,
+            progress=False,
+            auto_adjust=True,
+            threads=False
+        )
 
-    if df.empty:
+        if df.empty:
+            df = yf.download(
+                "^BVSP",
+                period="max",
+                progress=False,
+                auto_adjust=True,
+                threads=False
+            )
+
+        if df.empty:
+            st.warning(
+                "O Yahoo Finance não retornou dados para o Ibovespa neste momento. "
+                "Tente novamente ou reduza o período inicial para 2000/01/01."
+            )
+            return pd.DataFrame()
+
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [
+                col[0] if isinstance(col, tuple) else col
+                for col in df.columns
+            ]
+
+        df = df.reset_index()
+
+        if "Date" in df.columns:
+            df = df.rename(columns={"Date": "data"})
+        elif "Datetime" in df.columns:
+            df = df.rename(columns={"Datetime": "data"})
+
+        if "Close" in df.columns:
+            df = df.rename(columns={"Close": "ibovespa"})
+        elif "Adj Close" in df.columns:
+            df = df.rename(columns={"Adj Close": "ibovespa"})
+
+        if "data" not in df.columns or "ibovespa" not in df.columns:
+            st.warning(
+                f"Dados do Ibovespa vieram em formato inesperado. Colunas recebidas: {list(df.columns)}"
+            )
+            return pd.DataFrame()
+
+        df = df[["data", "ibovespa"]].copy()
+        df["data"] = pd.to_datetime(df["data"], errors="coerce")
+        df["ibovespa"] = pd.to_numeric(df["ibovespa"], errors="coerce")
+
+        df = df.dropna()
+        df = df.drop_duplicates(subset=["data"])
+        df = df.sort_values("data")
+
+        inicio = pd.to_datetime(data_inicio)
+        fim = pd.to_datetime(data_fim)
+
+        df = df[
+            (df["data"] >= inicio)
+            & (df["data"] <= fim)
+        ].copy()
+
+        return df
+
+    except Exception as error:
+        st.warning(f"Erro ao carregar Ibovespa pelo Yahoo Finance: {error}")
         return pd.DataFrame()
-
-    # Corrige quando o yfinance retorna colunas com múltiplos níveis
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [
-            col[0] if isinstance(col, tuple) else col
-            for col in df.columns
-        ]
-
-    df = df.reset_index()
-
-    # Padroniza a coluna de data
-    if "Date" in df.columns:
-        df = df.rename(columns={"Date": "data"})
-    elif "Datetime" in df.columns:
-        df = df.rename(columns={"Datetime": "data"})
-
-    # Padroniza a coluna de preço
-    if "Close" in df.columns:
-        df = df.rename(columns={"Close": "ibovespa"})
-    elif "Adj Close" in df.columns:
-        df = df.rename(columns={"Adj Close": "ibovespa"})
-    elif "close" in df.columns:
-        df = df.rename(columns={"close": "ibovespa"})
-
-    if "data" not in df.columns or "ibovespa" not in df.columns:
-        return pd.DataFrame()
-
-    df = df[["data", "ibovespa"]].copy()
-    df["data"] = pd.to_datetime(df["data"], errors="coerce")
-    df["ibovespa"] = pd.to_numeric(df["ibovespa"], errors="coerce")
-
-    df = df.dropna()
-    df = df.drop_duplicates(subset=["data"])
-    df = df.sort_values("data")
-
-    return df
-
 
 @st.cache_data(ttl=60 * 60 * 12)
 def carregar_cdi_bacen(data_inicio: str, data_fim: str) -> pd.DataFrame:
